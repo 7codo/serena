@@ -12,12 +12,11 @@ from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, func_metada
 from sensai.util import logging
 from sensai.util.string import dict_string
 
-from serena.project import MemoriesManager, Project
-from serena.prompt_factory import PromptFactory
+from serena.project import Project
 from serena.util.class_decorators import singleton
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_exceptions import SolidLSPException
-
+from serena.constants import DEFAULT_MAX_TOOL_ANSWER_CHARS, TOOL_TIMEOUT
 if TYPE_CHECKING:
     from serena.agent import SerenaAgent
     from serena.code_editor import CodeEditor
@@ -38,19 +37,8 @@ class Component(ABC):
         """
         return self.agent.get_project_root()
 
-    @property
-    def prompt_factory(self) -> PromptFactory:
-        return self.agent.prompt_factory
-
-    @property
-    def memories_manager(self) -> "MemoriesManager":
-        return self.project.memories_manager
-
     def create_language_server_symbol_retriever(self) -> "LanguageServerSymbolRetriever":
         from serena.symbol import LanguageServerSymbolRetriever
-
-        if not self.agent.is_using_language_server():
-            raise Exception("Cannot create LanguageServerSymbolRetriever; agent is not in language server mode.")
         language_server_manager = self.agent.get_language_server_manager_or_raise()
         return LanguageServerSymbolRetriever(language_server_manager, agent=self.agent)
 
@@ -59,12 +47,9 @@ class Component(ABC):
         return self.agent.get_active_project_or_raise()
 
     def create_code_editor(self) -> "CodeEditor":
-        from ..code_editor import JetBrainsCodeEditor, LanguageServerCodeEditor
+        from ..code_editor import LanguageServerCodeEditor
 
-        if self.agent.is_using_language_server():
-            return LanguageServerCodeEditor(self.create_language_server_symbol_retriever(), agent=self.agent)
-        else:
-            return JetBrainsCodeEditor(project=self.project, agent=self.agent)
+        return LanguageServerCodeEditor(self.create_language_server_symbol_retriever(), agent=self.agent)
 
 
 class ToolMarker:
@@ -81,12 +66,6 @@ class ToolMarkerCanEdit(ToolMarker):
 
 class ToolMarkerDoesNotRequireActiveProject(ToolMarker):
     pass
-
-
-class ToolMarkerOptional(ToolMarker):
-    """
-    Marker class for optional tools that are disabled by default.
-    """
 
 
 class ToolMarkerSymbolicRead(ToolMarker):
@@ -221,7 +200,7 @@ class Tool(Component):
 
     def _limit_length(self, result: str, max_answer_chars: int) -> str:
         if max_answer_chars == -1:
-            max_answer_chars = self.agent.serena_config.default_max_tool_answer_chars
+            max_answer_chars = DEFAULT_MAX_TOOL_ANSWER_CHARS
         if max_answer_chars <= 0:
             raise ValueError(f"Must be positive or the default (-1), got: {max_answer_chars=}")
         if (n_chars := len(result)) > max_answer_chars:
@@ -253,12 +232,7 @@ class Tool(Component):
         def task() -> str:
             apply_fn = self.get_apply_fn()
 
-            try:
-                if not self.is_active():
-                    return f"Error: Tool '{self.get_name_from_cls()}' is not active. Active tools: {self.agent.get_active_tool_names()}"
-            except Exception as e:
-                return f"RuntimeError while checking if tool {self.get_name_from_cls()} is active: {e}"
-
+            
             if log_call:
                 self._log_tool_application(inspect.currentframe())
             try:
@@ -266,11 +240,8 @@ class Tool(Component):
                 if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
                     if self.agent.get_active_project() is None:
                         return (
-                            "Error: No active project. Ask the user to provide the project path or to select a project from this list of known projects: "
-                            + f"{self.agent.serena_config.project_names}"
+                            "Activate the language server with the project's languages before calling this tool."
                         )
-
-                # apply the actual tool
                 try:
                     result = apply_fn(**kwargs)
                 except SolidLSPException as e:
@@ -290,15 +261,14 @@ class Tool(Component):
                     else:
                         raise
 
-                # record tool usage
-                self.agent.record_tool_usage(kwargs, result, self)
-
             except Exception as e:
                 if not catch_exceptions:
                     raise
                 msg = f"Error executing tool: {e.__class__.__name__} - {e}"
                 log.error(f"Error executing tool: {e}", exc_info=e)
                 result = msg
+
+          
 
             if log_call:
                 log.info(f"Result: {result}")
@@ -315,7 +285,7 @@ class Tool(Component):
         # execute the tool in the agent's task executor, with timeout
         try:
             task_exec = self.agent.issue_task(task, name=self.__class__.__name__)
-            return task_exec.result(timeout=self.agent.serena_config.tool_timeout)
+            return task_exec.result(timeout=TOOL_TIMEOUT)
         except Exception as e:  # typically TimeoutError (other exceptions caught in task)
             msg = f"Error: {e.__class__.__name__} - {e}"
             log.error(msg)
@@ -371,7 +341,6 @@ class EditedFileContext:
 @dataclass(kw_only=True)
 class RegisteredTool:
     tool_class: type[Tool]
-    is_optional: bool
     tool_name: str
 
 
@@ -385,11 +354,10 @@ class ToolRegistry:
         for cls in iter_subclasses(Tool):
             if not any(cls.__module__.startswith(pkg) for pkg in tool_packages):
                 continue
-            is_optional = issubclass(cls, ToolMarkerOptional)
             name = cls.get_name_from_cls()
             if name in self._tool_dict:
                 raise ValueError(f"Duplicate tool name found: {name}. Tool classes must have unique names.")
-            self._tool_dict[name] = RegisteredTool(tool_class=cls, is_optional=is_optional, tool_name=name)
+            self._tool_dict[name] = RegisteredTool(tool_class=cls, tool_name=name)
 
     def get_tool_class_by_name(self, tool_name: str) -> type[Tool]:
         return self._tool_dict[tool_name].tool_class

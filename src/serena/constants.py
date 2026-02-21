@@ -19,7 +19,6 @@ SERENA_ICON_DIR = str(_serena_pkg_path / "resources" / "icons")
 
 DEFAULT_SOURCE_FILE_ENCODING = "utf-8"
 """The default encoding assumed for project source files."""
-DEFAULT_CONTEXT = "desktop-app"
 
 SERENA_FILE_ENCODING = "utf-8"
 """The encoding used for Serena's own files, such as configuration files and memories."""
@@ -31,3 +30,13 @@ SERENA_LOG_FORMAT = "%(levelname)-5s %(asctime)-15s [%(threadName)s] %(name)s:%(
 
 LOG_MESSAGES_BUFFER_SIZE = 2500
 """The maximum number of log messages to keep in the buffer (for the dashboard)."""
+
+# DEFAULT CONFIG
+TOOL_TIMEOUT=240
+LOG_LEVEL = 20
+TRACE_LSP_COMMUNICATION = False
+LS_SPECIFIC_SETTINGS = {}
+DEFAULT_MAX_TOOL_ANSWER_CHARS = 150000
+PROJECT_PATH="C:\\Users\\Admin\\Desktop\\code\\project"
+IGNORED_PATHS=[]
+IGNORE_ALL_FILES_IN_GITIGNORE = True

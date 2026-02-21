@@ -10,13 +10,12 @@ from serena.tools import (
     SUCCESS_RESULT,
     Tool,
     ToolMarkerSymbolicEdit,
-    ToolMarkerSymbolicRead,
+    ToolMarkerSymbolicRead,ToolMarkerDoesNotRequireActiveProject
 )
-from serena.tools.tools_base import ToolMarkerOptional
 from solidlsp.ls_types import SymbolKind
 
 
-class RestartLanguageServerTool(Tool, ToolMarkerOptional):
+class RestartLanguageServerTool(Tool):
     """Restarts the language server, may be necessary when edits not through Serena happen."""
 
     def apply(self) -> str:
@@ -24,6 +23,39 @@ class RestartLanguageServerTool(Tool, ToolMarkerOptional):
         It may be necessary to restart the language server if it hangs.
         """
         self.agent.reset_language_server_manager()
+        return SUCCESS_RESULT
+
+class ActiveLanguageServerTool(Tool, ToolMarkerDoesNotRequireActiveProject):
+    """Activates the language server for the project's programming languages."""
+
+    def apply(self, languages: list[str] = []) -> str:
+        """
+        Activates the language server for the project's programming languages.
+        
+        list of languages for which language servers are started; choose from:
+          al                  bash                clojure             cpp                 csharp
+          csharp_omnisharp    dart                elixir              elm                 erlang
+          fortran             fsharp              go                  groovy              haskell
+          java                julia               kotlin              lua                 markdown
+          matlab              nix                 pascal              perl                php
+          powershell          python              python_jedi         r                   rego
+          ruby                ruby_solargraph     rust                scala               swift
+          terraform           toml                typescript          typescript_vts      vue
+          yaml                zig
+          
+        Note:
+          - For C, use cpp
+          - For JavaScript, use typescript
+          - For Free Pascal/Lazarus, use pascal
+        Special requirements:
+          - csharp: Requires the presence of a .sln file in the project folder.
+          - pascal: Requires Free Pascal Compiler (fpc) and optionally Lazarus.
+        When using multiple languages, the first language server that supports a given file will be used for that file.
+        The first language is the default language and the respective language server will be used as a fallback.
+        
+        :param languages: The programming languages to be used in the project.
+        """
+        self.agent.activate_project(languages=languages)
         return SUCCESS_RESULT
 
 

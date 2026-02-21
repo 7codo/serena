@@ -6,14 +6,12 @@ from collections.abc import Iterable, Iterator, Reversible
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Generic, Optional, TypeVar, cast
 
-from serena.jetbrains.jetbrains_plugin_client import JetBrainsPluginClient
-from serena.symbol import JetBrainsSymbol, LanguageServerSymbol, LanguageServerSymbolRetriever, PositionInFile, Symbol
+from serena.symbol import LanguageServerSymbol, LanguageServerSymbolRetriever, PositionInFile, Symbol
 from solidlsp import SolidLanguageServer, ls_types
 from solidlsp.ls import LSPFileBuffer
 from solidlsp.ls_utils import PathUtils, TextUtils
 
 from .constants import DEFAULT_SOURCE_FILE_ENCODING
-from .project import Project
 
 if TYPE_CHECKING:
     from .agent import SerenaAgent
@@ -29,12 +27,7 @@ class CodeEditor(Generic[TSymbol], ABC):
         self.agent = agent
 
         # set encoding based on active project, if available
-        encoding = DEFAULT_SOURCE_FILE_ENCODING
-        if agent is not None:
-            project = agent.get_active_project()
-            if project is not None:
-                encoding = project.project_config.encoding
-        self.encoding = encoding
+        self.encoding = DEFAULT_SOURCE_FILE_ENCODING
 
     class EditedFile(ABC):
         def __init__(self, relative_path: str) -> None:
@@ -377,63 +370,3 @@ class LanguageServerCodeEditor(CodeEditor[LanguageServerSymbol]):
         msg = f"Successfully renamed '{name_path}' to '{new_name}' ({num_changes} changes applied)"
         return msg
 
-
-class JetBrainsCodeEditor(CodeEditor[JetBrainsSymbol]):
-    def __init__(self, project: Project, agent: Optional["SerenaAgent"] = None) -> None:
-        self._project = project
-        super().__init__(project_root=project.project_root, agent=agent)
-
-    class EditedFile(CodeEditor.EditedFile):
-        def __init__(self, relative_path: str, project: Project):
-            super().__init__(relative_path)
-            path = os.path.join(project.project_root, relative_path)
-            log.info("Editing file: %s", path)
-            with open(path, encoding=project.project_config.encoding) as f:
-                self._content = f.read()
-
-        def get_contents(self) -> str:
-            return self._content
-
-        def set_contents(self, contents: str) -> None:
-            self._content = contents
-
-        def delete_text_between_positions(self, start_pos: PositionInFile, end_pos: PositionInFile) -> None:
-            self._content, _ = TextUtils.delete_text_between_positions(
-                self._content, start_pos.line, start_pos.col, end_pos.line, end_pos.col
-            )
-
-        def insert_text_at_position(self, pos: PositionInFile, text: str) -> None:
-            self._content, _, _ = TextUtils.insert_text_at_position(self._content, pos.line, pos.col, text)
-
-    @contextmanager
-    def _open_file_context(self, relative_path: str) -> Iterator["CodeEditor.EditedFile"]:
-        yield self.EditedFile(relative_path, self._project)
-
-    def _save_edited_file(self, edited_file: "CodeEditor.EditedFile") -> None:
-        super()._save_edited_file(edited_file)
-        with JetBrainsPluginClient.from_project(self._project) as client:
-            client.refresh_file(edited_file.relative_path)
-
-    def _find_unique_symbol(self, name_path: str, relative_file_path: str) -> JetBrainsSymbol:
-        with JetBrainsPluginClient.from_project(self._project) as client:
-            result = client.find_symbol(name_path, relative_path=relative_file_path, include_body=False, depth=0, include_location=True)
-            symbols = result["symbols"]
-            if not symbols:
-                raise ValueError(f"No symbol with name {name_path} found in file {relative_file_path}")
-            if len(symbols) > 1:
-                raise ValueError(
-                    f"Found multiple {len(symbols)} symbols with name {name_path} in file {relative_file_path}: "
-                    + json.dumps(symbols, indent=2)
-                )
-            return JetBrainsSymbol(symbols[0], self._project)
-
-    def rename_symbol(self, name_path: str, relative_file_path: str, new_name: str) -> str:
-        with JetBrainsPluginClient.from_project(self._project) as client:
-            client.rename_symbol(
-                name_path=name_path,
-                relative_path=relative_file_path,
-                new_name=new_name,
-                rename_in_comments=False,
-                rename_in_text_occurrences=False,
-            )
-            return "Success"

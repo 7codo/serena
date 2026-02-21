@@ -7,14 +7,12 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Self, TypedDict, TypeVar, Union
 
 from sensai.util.string import ToStringMixin
-
-import serena.jetbrains.jetbrains_types as jb
+from serena.constants import SERENA_FILE_ENCODING
 from solidlsp import SolidLanguageServer
 from solidlsp.ls import ReferenceInSymbol as LSPReferenceInSymbol
 from solidlsp.ls_types import Position, SymbolKind, UnifiedSymbolInformation
 
 from .ls_manager import LanguageServerManager
-from .project import Project
 
 if TYPE_CHECKING:
     from .agent import SerenaAgent
@@ -734,16 +732,6 @@ class LanguageServerSymbolRetriever:
         return {k: [LanguageServerSymbol(us) for us in v] for k, v in path_to_unified_symbols.items()}
 
 
-class JetBrainsSymbol(Symbol):
-    def __init__(self, symbol_dict: jb.SymbolDTO, project: Project) -> None:
-        """
-        :param symbol_dict: dictionary as returned by the JetBrains plugin client.
-        """
-        self._project = project
-        self._dict = symbol_dict
-        self._cached_file_content: str | None = None
-        self._cached_body_start_position: PositionInFile | None = None
-        self._cached_body_end_position: PositionInFile | None = None
 
     def _tostring_includes(self) -> list[str]:
         return []
@@ -760,7 +748,7 @@ class JetBrainsSymbol(Symbol):
     def get_file_content(self) -> str:
         if self._cached_file_content is None:
             path = os.path.join(self._project.project_root, self.get_relative_path())
-            with open(path, encoding=self._project.project_config.encoding) as f:
+            with open(path, encoding=SERENA_FILE_ENCODING) as f:
                 self._cached_file_content = f.read()
         return self._cached_file_content
 
@@ -891,26 +879,3 @@ class LanguageServerSymbolDictGrouper(SymbolDictGrouper[LanguageServerSymbol.Out
         collapse_singleton: bool = False,
     ) -> None:
         super().__init__(LanguageServerSymbol.OutputDict, "children", group_keys, group_children_keys, collapse_singleton)
-
-
-class JetBrainsSymbolDictGrouper(SymbolDictGrouper[jb.SymbolDTO]):
-    def __init__(
-        self,
-        group_keys: list[jb.SymbolDTOKey],
-        group_children_keys: list[jb.SymbolDTOKey],
-        collapse_singleton: bool = False,
-        map_name_path_to_name: bool = False,
-    ) -> None:
-        super().__init__(jb.SymbolDTO, "children", group_keys, group_children_keys, collapse_singleton)
-        self._map_name_path_to_name = map_name_path_to_name
-
-    def _transform_item(self, item: dict) -> dict:
-        if self._map_name_path_to_name:
-            # {"name_path: "Class/myMethod"} -> {"name: "myMethod"}
-            new_item = dict(item)
-            if "name_path" in item:
-                name_path = new_item.pop("name_path")
-                new_item["name"] = name_path.split("/")[-1]
-            return super()._transform_item(new_item)
-        else:
-            return super()._transform_item(item)

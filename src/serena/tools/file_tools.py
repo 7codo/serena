@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Literal
 
 from serena.text_utils import search_files
-from serena.tools import SUCCESS_RESULT, EditedFileContext, Tool, ToolMarkerCanEdit, ToolMarkerOptional
+from serena.tools import SUCCESS_RESULT, EditedFileContext, Tool, ToolMarkerCanEdit
 from serena.util.file_system import scan_directory
+from serena.constants import SERENA_FILE_ENCODING
 
 
 class ReadFileTool(Tool):
@@ -75,7 +76,7 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
             ), f"Cannot create file outside of the project directory, got {relative_path=}"
 
         abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(content, encoding=self.project.project_config.encoding)
+        abs_path.write_text(content, encoding=SERENA_FILE_ENCODING)
         answer = f"File created: {relative_path}."
         if will_overwrite_existing:
             answer += " Overwrote existing file."
@@ -287,7 +288,7 @@ class ReplaceContentTool(Tool, ToolMarkerCanEdit):
         return SUCCESS_RESULT
 
 
-class DeleteLinesTool(Tool, ToolMarkerCanEdit, ToolMarkerOptional):
+class DeleteLinesTool(Tool, ToolMarkerCanEdit):
     """
     Deletes a range of lines within a file.
     """
@@ -312,7 +313,7 @@ class DeleteLinesTool(Tool, ToolMarkerCanEdit, ToolMarkerOptional):
         return SUCCESS_RESULT
 
 
-class ReplaceLinesTool(Tool, ToolMarkerCanEdit, ToolMarkerOptional):
+class ReplaceLinesTool(Tool, ToolMarkerCanEdit):
     """
     Replaces a range of lines within a file with new content.
     """
@@ -343,7 +344,7 @@ class ReplaceLinesTool(Tool, ToolMarkerCanEdit, ToolMarkerOptional):
         return SUCCESS_RESULT
 
 
-class InsertAtLineTool(Tool, ToolMarkerCanEdit, ToolMarkerOptional):
+class InsertAtLineTool(Tool, ToolMarkerCanEdit):
     """
     Inserts content at a given line in a file.
     """

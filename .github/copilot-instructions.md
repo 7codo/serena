@@ -1,1 +1,0 @@
-MUST use the project-specific instructions from the `CLAUDE.md` file located in the project root.
