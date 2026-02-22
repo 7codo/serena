@@ -270,7 +270,6 @@ class SerenaAgent:
             languages = self.determine_languages()
         self.get_active_project_or_raise().create_language_server_manager(
             languages=languages,
-            log_level=LOG_LEVEL,
             ls_timeout=TOOL_TIMEOUT,
             trace_lsp_communication=TRACE_LSP_COMMUNICATION,
             ls_specific_settings=LS_SPECIFIC_SETTINGS,
