@@ -235,38 +235,38 @@ class Tool(Component):
             
             if log_call:
                 self._log_tool_application(inspect.currentframe())
-            # try:
-                # check whether the tool requires an active project and language server
-                # if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
-                #     if self.agent.get_active_project() is None:
-                #         return (
-                #             "Activate the language server for the languages used in the project before calling this tool."
-                #         )
             try:
-                result = apply_fn(**kwargs)
-            except SolidLSPException as e:
-                if e.is_language_server_terminated():
-                    affected_language = e.get_affected_language()
-                    if affected_language is not None:
-                        log.error(
-                            f"Language server terminated while executing tool ({e}). Restarting the language server and retrying ..."
+                # check whether the tool requires an active project and language server
+                if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
+                    if self.agent.get_active_project() is None:
+                        return (
+                            "Activate the language server for the languages used in the project before calling this tool."
                         )
-                        self.agent.get_language_server_manager_or_raise().restart_language_server(affected_language)
-                        result = apply_fn(**kwargs)
+                try:
+                    result = apply_fn(**kwargs)
+                except SolidLSPException as e:
+                    if e.is_language_server_terminated():
+                        affected_language = e.get_affected_language()
+                        if affected_language is not None:
+                            log.error(
+                                f"Language server terminated while executing tool ({e}). Restarting the language server and retrying ..."
+                            )
+                            self.agent.get_language_server_manager_or_raise().restart_language_server(affected_language)
+                            result = apply_fn(**kwargs)
+                        else:
+                            log.error(
+                                f"Language server terminated while executing tool ({e}), but affected language is unknown. Not retrying."
+                            )
+                            raise
                     else:
-                        log.error(
-                            f"Language server terminated while executing tool ({e}), but affected language is unknown. Not retrying."
-                        )
                         raise
-                else:
-                    raise
 
-            # except Exception as e:
-            #     if not catch_exceptions:
-            #         raise
-            #     msg = f"Error executing tool: {e.__class__.__name__} - {e}"
-            #     log.error(f"Error executing tool: {e}", exc_info=e)
-            #     result = msg
+            except Exception as e:
+                if not catch_exceptions:
+                    raise
+                msg = f"Error executing tool: {e.__class__.__name__} - {e}"
+                log.error(f"Error executing tool: {e}", exc_info=e)
+                result = msg
 
           
 
