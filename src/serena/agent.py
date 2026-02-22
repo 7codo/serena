@@ -255,7 +255,7 @@ class SerenaAgent:
 
         # initialize the language server in the background (if in language server mode)
         
-        init_language_server_manager()
+        self.issue_task(init_language_server_manager)
 
         if self._project_activation_callback is not None:
             self._project_activation_callback()
