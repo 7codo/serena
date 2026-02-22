@@ -1,10 +1,12 @@
 import logging
 import threading
+import os
+from pathlib import Path
 from collections.abc import Iterator
 
 from sensai.util.logging import LogTime
 
-from serena.constants import SERENA_MANAGED_DIR_NAME, PROJECT_PATH
+from serena.constants import SERENA_MANAGED_DIR_NAME
 from solidlsp import SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.settings import SolidLSPSettings
@@ -38,12 +40,18 @@ class LanguageServerFactory:
         )
 
         log.info(f"Creating language server instance for {self.project_root}, language={language}.")
+        home_dir = os.getenv("SERENA_HOME")
+        if home_dir is None or home_dir.strip() == "":
+            home_dir = str(Path.home() / SERENA_MANAGED_DIR_NAME)
+        else:
+            home_dir = home_dir.strip()
+        
         return SolidLanguageServer.create(
             ls_config,
             self.project_root,
             timeout=self.ls_timeout,
             solidlsp_settings=SolidLSPSettings(
-                solidlsp_dir=PROJECT_PATH,
+                solidlsp_dir=home_dir,
                 project_data_relative_path=SERENA_MANAGED_DIR_NAME,
                 ls_specific_settings=self.ls_specific_settings or {},
             ),

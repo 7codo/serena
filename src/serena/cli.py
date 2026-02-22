@@ -100,8 +100,6 @@ class TopLevelCommands(AutoRegisteringGroup):
     @staticmethod
     @click.command("start-mcp-server", help="Starts the Serena MCP server.")
     @click.option("--project", "project", type=PROJECT_TYPE, default=None, help="Path or name of project to activate at startup.")
-    @click.option("--project-file", "project", type=PROJECT_TYPE, default=None, help="[DEPRECATED] Use --project instead.")
-    @click.argument("project_file_arg", type=PROJECT_TYPE, required=False, default=None, metavar="")
     @click.option(
         "--transport",
         type=click.Choice(["stdio", "sse", "streamable-http"]),
@@ -125,16 +123,8 @@ class TopLevelCommands(AutoRegisteringGroup):
         default=None,
         help="Override log level in config.",
     )
-    @click.option(
-        "--project-from-cwd",
-        is_flag=True,
-        default=False,
-        help="Auto-detect project from current working directory (searches for .serena/project.yml or .git, falls back to CWD). Intended for CLI-based agents like Claude Code, Gemini and Codex.",
-    )
     def start_mcp_server(
         project: str | None,
-        project_file_arg: str | None,
-        project_from_cwd: bool | None,
         transport: Literal["stdio", "sse", "streamable-http"],
         host: str,
         port: int,
@@ -159,18 +149,8 @@ class TopLevelCommands(AutoRegisteringGroup):
         log.info("Initializing Serena MCP server")
         # log.info("Storing logs in %s", log_path)
 
-        # Handle --project-from-cwd flag
-        if project_from_cwd:
-            if project is not None or project_file_arg is not None:
-                raise click.UsageError("--project-from-cwd cannot be used with --project or positional project argument")
-            project = find_project_root()
-            if project is not None:
-                log.info("Auto-detected project root: %s", project)
-            else:
-                log.warning("No project root found from %s; not activating any project", os.getcwd())
-
-        project_file = project_file_arg or project
-        factory = SerenaMCPFactory(project=project_file)
+        
+        factory = SerenaMCPFactory(project=project)
         server = factory.create_mcp_server(
             host=host,
             port=port,
@@ -178,11 +158,7 @@ class TopLevelCommands(AutoRegisteringGroup):
             trace_lsp_communication=TRACE_LSP_COMMUNICATION,
             tool_timeout=TOOL_TIMEOUT,
         )
-        if project_file_arg:
-            log.warning(
-                "Positional project arg is deprecated; use --project instead. Used: %s",
-                project_file,
-            )
+        
         log.info("Starting MCP server …")
         server.run(transport=transport)
 

@@ -42,9 +42,7 @@ publish-url = "https://test.pypi.org/legacy/"
 explicit = true
 
 [project.scripts]
-serena = "serena.cli:top_level"
 serena-mcp-server = "serena.cli:start_mcp_server"
-index-project = "serena.cli:index_project"        # deprecated
 
 [project.license]
 text = "MIT"

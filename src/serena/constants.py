@@ -3,7 +3,7 @@ from pathlib import Path
 _repo_root_path = Path(__file__).parent.parent.parent.resolve()
 _serena_pkg_path = Path(__file__).parent.resolve()
 
-SERENA_MANAGED_DIR_NAME = ".serena"
+SERENA_MANAGED_DIR_NAME = ".actovator"
 
 # TODO: Path-related constants should be moved to SerenaPaths; don't add further constants here.
 REPO_ROOT = str(_repo_root_path)
@@ -37,6 +37,5 @@ LOG_LEVEL = 20
 TRACE_LSP_COMMUNICATION = False
 LS_SPECIFIC_SETTINGS = {}
 DEFAULT_MAX_TOOL_ANSWER_CHARS = 150000
-PROJECT_PATH="C:\\Users\\Admin\\Desktop\\code\\project"
 IGNORED_PATHS=[]
 IGNORE_ALL_FILES_IN_GITIGNORE = True

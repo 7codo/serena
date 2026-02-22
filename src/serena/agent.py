@@ -16,7 +16,7 @@ from serena.task_executor import TaskExecutor
 from serena.tools import ReplaceContentTool, Tool, ToolMarker, ToolRegistry
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_config import Language
-from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS, PROJECT_PATH
+from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS
 
 log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
@@ -105,7 +105,7 @@ class SerenaAgent:
             The modes may adjust prompts, tool availability, and tool descriptions.
         
         """
-
+        self.project = project
         # project-specific instances, which will be initialized upon project activation
         self._active_project: Project | None = None
 
@@ -188,7 +188,7 @@ class SerenaAgent:
         :return: the root directory of the active project (if any); raises a ValueError if there is no active project
         """
         
-        return PROJECT_PATH
+        return self.project
 
     def get_exposed_tool_instances(self) -> list["Tool"]:
         """
@@ -246,7 +246,7 @@ class SerenaAgent:
 
     def activate_project(self, languages: list[str] = []) -> None:
         from .project import Project
-        project = Project()
+        project = Project(self.get_project_root())
         self._active_project = project
         def init_language_server_manager() -> None:
             # start the language server
@@ -280,7 +280,7 @@ class SerenaAgent:
         self,
     ) -> list[str]:
        
-        project_root = Path(PROJECT_PATH).resolve()
+        project_root = Path(self.get_project_root()).resolve()
         if not project_root.exists():
             raise FileNotFoundError(f"Project root not found: {project_root}")
         with LogTime("Project configuration auto-generation", logger=log):
@@ -313,25 +313,31 @@ class SerenaAgent:
             log.info("Using languages: %s", languages_to_use)
             return languages_to_use
 
+    def get_active_languages(self) -> list[Language]:
+        """
+        Retrieves the active languages of the current project.
+        """
+        return self.get_active_project_or_raise().get_active_languages()
 
-    def add_language(self, language: Language) -> None:
+    def add_language(self, language: str) -> None:
         """
         Adds a new language to the active project, spawning the respective language server and updating the project configuration.
-        The addition is scheduled via the agent's task executor and executed synchronously, i.e. the method returns
-        when the addition is complete.
+        The addition is scheduled via the agent's task executor and executed asynchronously.
 
         :param language: the language to add
         """
-        self.execute_task(lambda: self.get_active_project_or_raise().add_language(language), name=f"AddLanguage:{language.value}")
+        lang = self.get_active_project_or_raise().languages_mapping(languages=[language])
+        self.issue_task(lambda: self.get_active_project_or_raise().add_language(lang[0]), name=f"AddLanguage:{lang[0].value}")
 
-    def remove_language(self, language: Language) -> None:
+    def remove_language(self, language: str) -> None:
         """
         Removes a language from the active project, shutting down the respective language server and updating the project configuration.
         The removal is scheduled via the agent's task executor and executed asynchronously.
 
         :param language: the language to remove
         """
-        self.issue_task(lambda: self.get_active_project_or_raise().remove_language(language), name=f"RemoveLanguage:{language.value}")
+        lang = self.get_active_project_or_raise().languages_mapping(languages=[language])
+        self.issue_task(lambda: self.get_active_project_or_raise().remove_language(lang[0]), name=f"RemoveLanguage:{lang[0].value}")
 
     def get_tool(self, tool_class: type[TTool]) -> TTool:
         return self._all_tools[tool_class]  # type: ignore

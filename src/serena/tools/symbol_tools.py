@@ -25,6 +25,43 @@ class RestartLanguageServerTool(Tool):
         self.agent.reset_language_server_manager()
         return SUCCESS_RESULT
 
+# class AddLanguageTool(Tool):
+#     """Add a programming language to the active language server configuration."""
+
+#     def apply(self, language: str) -> str:
+#         """
+#         Add a language to the current language server.
+
+#         :param language: Language identifier (e.g., 'python', 'cpp', 'typescript').
+#         """
+#         self.agent.add_language(language=language)
+#         return SUCCESS_RESULT
+
+
+# class RemoveLanguageTool(Tool):
+#     """Remove a programming language from the active language server configuration."""
+
+#     def apply(self, language: str) -> str:
+#         """
+#         Remove a language from the current language server.
+
+#         :param language: Language identifier to remove.
+#         """
+#         self.agent.remove_language(language=language)
+#         return SUCCESS_RESULT
+
+
+# # this didn't work this is why I comment it and remove/add language
+# class GetActiveLanguagesTool(Tool):
+#     """Retrieve currently active languages."""
+
+#     def apply(self) -> str:
+#         """
+#         Return a list of languages currently active in the language server.
+#         """
+#         languages = self.agent.get_active_languages()
+#         return str(languages)
+    
 class ActiveLanguageServerTool(Tool, ToolMarkerDoesNotRequireActiveProject):
     """Activates the language server for the project's programming languages."""
 

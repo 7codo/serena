@@ -8,7 +8,7 @@ import pathspec
 from sensai.util.logging import LogTime
 from sensai.util.string import ToStringMixin
 
-from serena.constants import SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, PROJECT_PATH, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
+from serena.constants import SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
 from serena.ls_manager import LanguageServerFactory, LanguageServerManager
 from serena.text_utils import MatchedConsecutiveLines, search_files
 from serena.util.file_system import GitignoreParser, match_path
@@ -23,8 +23,9 @@ log = logging.getLogger(__name__)
 class Project(ToStringMixin):
     def __init__(
         self,
+        project_root: str,
     ):
-        self.project_root = PROJECT_PATH
+        self.project_root = project_root
         self.language_server_manager: LanguageServerManager | None = None
 
         # create .gitignore file in the project's Serena data folder if not yet present
@@ -349,7 +350,7 @@ class Project(ToStringMixin):
         self.language_server_manager = LanguageServerManager.from_languages(langs, factory)
         return self.language_server_manager
 
-    def languages_mapping(languages: list[str] = []) -> list[Language]:
+    def languages_mapping(self, languages: list[str] = []) -> list[Language]:
         lang_name_mapping = {"javascript": "typescript"}
         mapped_langs: list[Language] = []
         for language_str in languages:
@@ -366,6 +367,51 @@ class Project(ToStringMixin):
                 ) from e
         return mapped_langs
 
+    def get_active_languages(self) -> list[Language]:
+        """
+        Returns active programming languages from the language server manager.
+        """
+        if self.language_server_manager is None:
+            log.info("Language server manager is not active...")
+            return []
+        else:
+            log.info("Retrieving active language servers...")
+            return self.language_server_manager.get_active_languages()
+
+    def add_language(self, language: Language) -> None:
+        """
+        Adds a new programming language to the project configuration, starting the corresponding
+        language server instance if the LS manager is active.
+        The project configuration is saved to disk after adding the language.
+
+        :param language: the programming language to add
+        """
+        
+
+        # start the language server (if the LS manager is active)
+        if self.language_server_manager is None:
+            log.info("Language server manager is not active; skipping language server startup for the new language.")
+        else:
+            log.info("Adding and starting the language server for new language %s ...", language.value)
+            self.language_server_manager.add_language_server(language)
+
+
+    def remove_language(self, language: Language) -> None:
+        """
+        Removes a programming language from the project configuration, stopping the corresponding
+        language server instance if the LS manager is active.
+        The project configuration is saved to disk after removing the language.
+
+        :param language: the programming language to remove
+        """
+        
+        # stop the language server (if the LS manager is active)
+        if self.language_server_manager is None:
+            log.info("Language server manager is not active; skipping language server shutdown for the removed language.")
+        else:
+            log.info("Removing and stopping the language server for language %s ...", language.value)
+            self.language_server_manager.remove_language_server(language)
+            
     def shutdown(self, timeout: float = 2.0) -> None:
         if self.language_server_manager is not None:
             self.language_server_manager.stop_all(save_cache=True, timeout=timeout)

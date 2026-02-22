@@ -240,7 +240,7 @@ class Tool(Component):
                 if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
                     if self.agent.get_active_project() is None:
                         return (
-                            "Activate the language server with the project's languages before calling this tool."
+                            "Activate the language server for the languages used in the project before calling this tool."
                         )
                 try:
                     result = apply_fn(**kwargs)
