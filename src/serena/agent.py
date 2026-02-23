@@ -247,23 +247,18 @@ class SerenaAgent:
 
     def activate_project(self, languages: list[str] = []) -> None:
         log.info(f"Activating project with languages: {languages}")
-        if(self._active_project is None):
+        if self._active_project is None:
             from .project import Project
             log.info(f"Creating new project instance for root: {self.get_project_root()}")
             project = Project(self.get_project_root())
             self._active_project = project
             log.info("Project instance created successfully")
-            
-        def init_language_server_manager() -> None:
-            log.info("Starting language server initialization")
-            # start the language server
-            with LogTime("Language server initialization", logger=log):
-                self.reset_language_server_manager(languages=languages)
-            log.info("Language server initialization completed")
-
-        # initialize the language server in the background (if in language server mode)
-        log.info("Issuing language server initialization task")
-        self.issue_task(init_language_server_manager)
+        
+        log.info("Starting language server initialization")
+        # start the language server SYNCHRONOUSLY (not async)
+        with LogTime("Language server initialization", logger=log):
+            self.reset_language_server_manager(languages=languages)
+        log.info("Language server initialization completed")
 
         if self._project_activation_callback is not None:
             log.info("Calling project activation callback")
