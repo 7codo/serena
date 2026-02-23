@@ -142,9 +142,9 @@ class TopLevelCommands(AutoRegisteringGroup):
         stderr_handler.formatter = formatter
         Logger.root.addHandler(stderr_handler)
         
-        # file_handler = logging.FileHandler(log_path, mode="w")
-        # file_handler.formatter = formatter
-        # Logger.root.addHandler(file_handler)
+        file_handler = logging.FileHandler(f"{project}/serena.log", mode="w")
+        file_handler.formatter = formatter
+        Logger.root.addHandler(file_handler)
 
         log.info("Initializing Serena MCP server")
         # log.info("Storing logs in %s", log_path)
