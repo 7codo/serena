@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Self
 
-from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
 
 from serena.constants import DEFAULT_SOURCE_FILE_ENCODING
@@ -408,19 +407,3 @@ def search_files(
     return matches
 
 
-def render_html(html: str) -> str:
-    """
-    Remove HTML tags and decode HTML entities from text while preserving the actual content.
-    This keeps type information and structure but removes all formatting.
-
-    :param html: HTML text to clean
-    :return: Plain text without HTML tags and with decoded entities
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    # join text with spaces to avoid concatenation of words
-    text = soup.get_text(separator=" ", strip=True)
-
-    # normalize non-breaking spaces
-    text = text.replace("\xa0", " ")
-
-    return text.strip()
