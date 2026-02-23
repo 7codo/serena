@@ -256,8 +256,14 @@ class SerenaAgent:
         
         log.info("Starting language server initialization")
         # start the language server SYNCHRONOUSLY (not async)
-        with LogTime("Language server initialization", logger=log):
-            self.reset_language_server_manager(languages=languages)
+        def init_language_server_manager() -> None:
+            # start the language server
+            with LogTime("Language server initialization", logger=log):
+                self.reset_language_server_manager()
+
+        # initialize the language server in the background (if in language server mode)
+        
+        self.issue_task(init_language_server_manager)
         log.info("Language server initialization completed")
 
         if self._project_activation_callback is not None:
