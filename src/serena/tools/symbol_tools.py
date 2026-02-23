@@ -12,8 +12,9 @@ from serena.tools import (
     ToolMarkerSymbolicEdit,
     ToolMarkerSymbolicRead,ToolMarkerDoesNotRequireActiveProject
 )
+from sensai.util import logging
 from solidlsp.ls_types import SymbolKind
-
+log = logging.getLogger(__name__)
 
 class RestartLanguageServerTool(Tool):
     """Restarts the language server, may be necessary when edits not through Serena happen."""
@@ -92,7 +93,9 @@ class ActiveLanguageServerTool(Tool, ToolMarkerDoesNotRequireActiveProject):
         
         :param languages: The programming languages to be used in the project.
         """
+        log.info(f"Activating language server with languages: {languages}")
         self.agent.activate_project(languages=languages)
+        log.info("Language server activated successfully")
         return SUCCESS_RESULT
 
 
