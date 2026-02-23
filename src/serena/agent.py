@@ -278,7 +278,7 @@ class SerenaAgent:
         Starts/resets the language server manager for the current project
         """
         # instantiate and start the necessary language servers
-        if len(languages) == 0 or languages == None:
+        if languages == None or len(languages) == 0:
             languages = self.determine_languages()
         self.get_active_project_or_raise().create_language_server_manager(
             languages=languages,

@@ -239,9 +239,8 @@ class Tool(Component):
                 # check whether the tool requires an active project and language server
                 if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
                     if self.agent.get_active_project() is None:
-                        return (
-                            "Activate the language server for the languages used in the project before calling this tool."
-                        )
+                        log.info("Project is None")
+                        self.agent.activate_project(languages=["typescript"])
                 try:
                     result = apply_fn(**kwargs)
                 except SolidLSPException as e:
