@@ -273,7 +273,7 @@ class SerenaAgent:
         def init_language_server_manager() -> None:
             # start the language server
             with LogTime("Language server initialization", logger=log):
-                self.reset_language_server_manager()
+                self.reset_language_server_manager(languages=languages)
 
         # initialize the language server in the background (if in language server mode)
         
@@ -320,7 +320,7 @@ class SerenaAgent:
         """
         # instantiate and start the necessary language servers
         if languages == None or len(languages) == 0:
-            languages = self.determine_languages()
+            languages = self.determine_languages() or ["markdown"]
         self.get_active_project_or_raise().create_language_server_manager(
             languages=languages,
             ls_timeout=TOOL_TIMEOUT,
