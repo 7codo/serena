@@ -141,7 +141,7 @@ class SerenaAgent:
         
     
     def get_config_file_path(self):
-        path_to_serena_data_folder = os.path.join(self.project_root, SERENA_MANAGED_DIR_NAME)
+        path_to_serena_data_folder = os.path.join(self.get_project_root(), SERENA_MANAGED_DIR_NAME)
         serena_data_config_path = os.path.join(path_to_serena_data_folder, "config.json")
         return Path(serena_data_config_path)
     
