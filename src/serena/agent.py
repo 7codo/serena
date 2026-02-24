@@ -17,6 +17,7 @@ from serena.tools import ReplaceContentTool, Tool, ToolMarker, ToolRegistry
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_config import Language
 from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS
+from solidlsp.ls_utils import set_permanentenv_var_in_linux
 
 log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
@@ -128,11 +129,11 @@ class SerenaAgent:
         self._project_activation_callback = project_activation_callback
 
         # activate a project configuration (if provided or if there is only a single project available)
-        # if project is not None:
-        #     try:
-        #         self._activate_project()
-        #     except Exception as e:
-        #         log.error(f"Error activating project '{project}' at startup: {e}", exc_info=e)
+        if project is not None:
+            try:
+                self.activate_project()
+            except Exception as e:
+                log.error(f"Error activating project '{project}' at startup: {e}", exc_info=e)
 
         # update active modes and active tools (considering the active project, if any)
         # declared attributes are set in the call to _update_active_modes_and_tools()
@@ -245,8 +246,14 @@ class SerenaAgent:
         """
         return self._task_executor.execute_task(task, name=name, logged=logged, timeout=timeout)
 
-    def activate_project(self, languages: list[str] = []) -> None:
+    def activate_project(self, languages: list[str] | None = None) -> None:
         log.info(f"Activating project with languages: {languages}")
+        if languages == None or len(languages) == 0:
+            languages = os.getenv('ACTOVATOR_LANGUAGES', ["markdown"])
+        #TODO: set system env var here
+        else:
+            set_permanentenv_var_in_linux("ACTOVATOR_LANGUAGES", languages)
+            
         if self._active_project is None:
             from .project import Project
             log.info(f"Creating new project instance for root: {self.get_project_root()}")
@@ -269,6 +276,7 @@ class SerenaAgent:
         if self._project_activation_callback is not None:
             log.info("Calling project activation callback")
             self._project_activation_callback()
+        
         
         log.info("Project activation completed")
             

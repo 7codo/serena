@@ -423,3 +423,18 @@ class SymbolUtils:
             if SymbolUtils.symbol_tree_contains_name(symbol["children"], name):
                 return True
         return False
+
+def set_permanentenv_var_in_linux(variable, value):
+    # Appending to the user's bashrc (User-level, not system-level)
+    # For System-level, you would typically need sudo and edit /etc/environment
+    home_dir = os.path.expanduser("~")
+    bashrc_path = os.path.join(home_dir, ".bashrc")
+    
+    line = f'\nexport {variable}="{value}"\n'
+    
+    with open(bashrc_path, "a") as f:
+        f.write(line)
+    
+    log.info(f"Added {variable} to {bashrc_path}")
+    log.info("Run 'source ~/.bashrc' or restart your terminal to apply.")
+

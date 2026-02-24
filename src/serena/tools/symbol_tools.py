@@ -93,6 +93,7 @@ class ActiveLanguageServerTool(Tool, ToolMarkerDoesNotRequireActiveProject):
         
         :param languages: The programming languages to be used in the project.
         """
+        
         log.info(f"Activating language server with languages: {languages}")
         self.agent.activate_project(languages=languages)
         log.info("Language server activated successfully")

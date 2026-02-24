@@ -30,11 +30,11 @@ class Project(ToStringMixin):
 
         # create .gitignore file in the project's Serena data folder if not yet present
         serena_data_gitignore_path = os.path.join(self.path_to_serena_data_folder(), ".gitignore")
-        # if not os.path.exists(serena_data_gitignore_path):
-        #     os.makedirs(os.path.dirname(serena_data_gitignore_path), exist_ok=True)
-        #     log.info(f"Creating .gitignore file in {serena_data_gitignore_path}")
-        #     with open(serena_data_gitignore_path, "w", encoding="utf-8") as f:
-        #         f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\n")
+        if not os.path.exists(serena_data_gitignore_path):
+            os.makedirs(os.path.dirname(serena_data_gitignore_path), exist_ok=True)
+            log.info(f"Creating .gitignore file in {serena_data_gitignore_path}")
+            with open(serena_data_gitignore_path, "w", encoding="utf-8") as f:
+                f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\n")
         
         self.__ignore_spec: pathspec.PathSpec
         self.__ignored_patterns: list[str]
