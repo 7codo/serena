@@ -293,12 +293,13 @@ class SerenaAgent:
         try:
             state = {}
             if self.get_config_file_path().exists():
-                state = json.loads(self.get_config_file_path())
+                state = json.loads(self.get_config_file_path().read_text())
             
             state["languages"] = languages
             
-            self.get_config_file_path().write_text(json.dump(state))
-            log.info(f"Saved state to {self.STATE_FILE}: {state}")
+            self.get_config_file_path().write_text(json.dumps(state))
+            
+            log.info(f"Saved state to {self.get_config_file_path()}: {state}")
         except Exception as e:
             log.error(f"Failed to save state: {e}")
     
