@@ -34,7 +34,7 @@ class Project(ToStringMixin):
             os.makedirs(os.path.dirname(serena_data_gitignore_path), exist_ok=True)
             log.info(f"Creating .gitignore file in {serena_data_gitignore_path}")
             with open(serena_data_gitignore_path, "w", encoding="utf-8") as f:
-                f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\n")
+                f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\nconfig.json\n")
         
         self.__ignore_spec: pathspec.PathSpec
         self.__ignored_patterns: list[str]

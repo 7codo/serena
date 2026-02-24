@@ -3,6 +3,7 @@ The Serena Model Context Protocol (MCP) Server
 """
 
 import os
+import json
 import platform
 from collections.abc import Callable
 from typing import TypeVar
@@ -16,8 +17,7 @@ from serena.task_executor import TaskExecutor
 from serena.tools import ReplaceContentTool, Tool, ToolMarker, ToolRegistry
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_config import Language
-from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS
-from solidlsp.ls_utils import set_permanentenv_var_in_linux
+from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS, SERENA_MANAGED_DIR_NAME
 
 log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
@@ -139,7 +139,11 @@ class SerenaAgent:
         # declared attributes are set in the call to _update_active_modes_and_tools()
         self._active_tools: AvailableTools
         
-        
+    
+    def get_config_file_path(self):
+        path_to_serena_data_folder = os.path.join(self.project_root, SERENA_MANAGED_DIR_NAME)
+        serena_data_config_path = os.path.join(path_to_serena_data_folder, "config.json")
+        return Path(serena_data_config_path)
     
 
     def get_current_tasks(self) -> list[TaskExecutor.TaskInfo]:
@@ -247,13 +251,16 @@ class SerenaAgent:
         return self._task_executor.execute_task(task, name=name, logged=logged, timeout=timeout)
 
     def activate_project(self, languages: list[str] | None = None) -> None:
-        log.info(f"Activating project with languages: {languages}")
         if languages == None or len(languages) == 0:
-            languages = os.getenv('ACTOVATOR_LANGUAGES', ["markdown"])
-        #TODO: set system env var here
+            # Load from state file instead of environment variable
+            languages = self._load_languages_from_state()
+            if not languages:
+                languages = ["markdown"]
         else:
-            set_permanentenv_var_in_linux("ACTOVATOR_LANGUAGES", languages)
+            # Save to persistent state file
+            self._save_languages_to_state(languages)
             
+        log.info(f"Activating project with languages: {languages}")
         if self._active_project is None:
             from .project import Project
             log.info(f"Creating new project instance for root: {self.get_project_root()}")
@@ -281,6 +288,32 @@ class SerenaAgent:
         log.info("Project activation completed")
             
 
+    def _save_languages_to_state(self, languages: list[str]) -> None:
+        """Save languages to a persistent state file."""
+        try:
+            state = {}
+            if self.get_config_file_path().exists():
+                state = json.loads(self.get_config_file_path())
+            
+            state["languages"] = languages
+            
+            self.get_config_file_path().write_text(json.dump(state))
+            log.info(f"Saved state to {self.STATE_FILE}: {state}")
+        except Exception as e:
+            log.error(f"Failed to save state: {e}")
+    
+    def _load_languages_from_state(self) -> list[str]:
+        """Load languages from persistent state file."""
+        try:
+            if self.get_config_file_path().exists():
+                state = json.loads(self.get_config_file_path().read_text())
+                languages = state.get("languages", [])
+                log.info(f"Loaded languages from state: {languages}")
+                return languages
+        except Exception as e:
+            log.error(f"Failed to load state: {e}")
+        return []
+    
     def reset_language_server_manager(self, languages: list[str] | None = None) -> None:
         """
         Starts/resets the language server manager for the current project
