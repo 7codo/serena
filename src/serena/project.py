@@ -335,6 +335,7 @@ class Project(ToStringMixin):
             self.language_server_manager = None
 
         log.info(f"Creating language server manager for {self.project_root}")
+        log.info("self._ignored_patterns", self._ignored_patterns)
         factory = LanguageServerFactory(
             project_root=self.project_root,
             encoding="utf-8",
