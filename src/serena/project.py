@@ -249,12 +249,12 @@ class Project(ToStringMixin):
         with LogTime(f"Gathering ignore spec for project", logger=log):
 
             # gather ignored paths from the global configuration, project configuration, and gitignore files
-            global_ignored_paths = IGNORED_PATHS
+            # global_ignored_paths = IGNORED_PATHS
             
-            ignored_patterns = list(global_ignored_paths) + list(IGNORED_PATHS)
-            if len(global_ignored_paths) > 0:
-                log.info(f"Using {len(global_ignored_paths)} ignored paths from the global configuration.")
-                log.debug(f"Global ignored paths: {list(global_ignored_paths)}")
+            ignored_patterns = list(IGNORED_PATHS)
+            if len(IGNORED_PATHS) > 0:
+                log.info(f"Using {len(IGNORED_PATHS)} ignored paths from the global configuration.")
+                log.debug(f"Global ignored paths: {list(IGNORED_PATHS)}")
             if len(IGNORED_PATHS) > 0:
                 log.info(f"Using {len(IGNORED_PATHS)} ignored paths from the project configuration.")
                 log.debug(f"Project ignored paths: {IGNORED_PATHS}")

@@ -56,12 +56,15 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
     Creates/overwrites a file in the project directory.
     """
 
-    def apply(self, relative_path: str, content: str) -> str:
+    def apply(self, relative_path: str, content: str, enable_human_verification: bool) -> str:
         """
         Write a new file or overwrite an existing file.
-
+        
+        **IMPORTANT**: If the `enable_human_verification` set to true (default is false), the content will be sent to the user for verification. The user can then accept, edit, or reject it. **Remember: only set this to true if EXPLICITLY requested by the user."**
+        
         :param relative_path: the relative path to the file to create
         :param content: the (appropriately encoded) content to write to the file
+        :param enable_human_verification: wether to enable human in the loop or not
         :return: a message indicating success or failure
         """
         project_root = self.get_project_root()
@@ -86,15 +89,18 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
 class ListDirTool(Tool):
     """
     Lists files and directories in the given directory (optionally with recursion).
+    Always ignores 'node_modules/', '.venv/', and files matching '.env*'.
     """
 
     def apply(self, relative_path: str, recursive: bool, skip_ignored_files: bool = False, max_answer_chars: int = -1) -> str:
         """
         Lists files and directories in the given directory (optionally with recursion).
-
+        
+        "**IMPORTANT:** The following paths are always ignored: `'node_modules/'`, `'.venv/'`, and any files matching `'.env*'`."
+        
         :param relative_path: the relative path to the directory to list; pass "." to scan the project root
         :param recursive: whether to scan subdirectories recursively
-        :param skip_ignored_files: whether to skip files and directories that are ignored
+        :param skip_ignored_files: whether to skip files and directories that are ignored by the project settings
         :param max_answer_chars: if the output is longer than this number of characters,
             no content will be returned. -1 means the default value from the config will be used.
             Don't adjust unless there is really no other way to get the content required for the task.
@@ -111,12 +117,32 @@ class ListDirTool(Tool):
 
         self.project.validate_relative_path(relative_path, require_not_ignored=skip_ignored_files)
 
+        # Define specific logic to always ignore certain paths
+        def is_always_ignored_dir(path: str) -> bool:
+            name = os.path.basename(path)
+            return name in ("node_modules", ".venv")
+
+        def is_always_ignored_file(path: str) -> bool:
+            name = os.path.basename(path)
+            return name.startswith(".env")
+
+        # Retrieve base ignore logic from project settings if requested
+        base_is_ignored_dir = self.project.is_ignored_path if skip_ignored_files else lambda x: False
+        base_is_ignored_file = self.project.is_ignored_path if skip_ignored_files else lambda x: False
+
+        # Combine the 'always ignore' logic with the base logic
+        def combined_is_ignored_dir(path: str) -> bool:
+            return is_always_ignored_dir(path) or base_is_ignored_dir(path)
+
+        def combined_is_ignored_file(path: str) -> bool:
+            return is_always_ignored_file(path) or base_is_ignored_file(path)
+
         dirs, files = scan_directory(
             os.path.join(self.get_project_root(), relative_path),
             relative_to=self.get_project_root(),
             recursive=recursive,
-            is_ignored_dir=self.project.is_ignored_path if skip_ignored_files else None,
-            is_ignored_file=self.project.is_ignored_path if skip_ignored_files else None,
+            is_ignored_dir=combined_is_ignored_dir,
+            is_ignored_file=combined_is_ignored_file,
         )
 
         result = self._to_json({"dirs": dirs, "files": files})
