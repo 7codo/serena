@@ -96,7 +96,7 @@ class ListDirTool(Tool):
         """
         Lists files and directories in the given directory (optionally with recursion).
         
-        "**IMPORTANT:** The following paths are always ignored: `'node_modules/'`, `'.venv/'`, and any files matching `'.env*'`."
+        "**IMPORTANT:** The following paths are always ignored: `node_modules/`, `.venv/`, `.git`, `.next`, `.actovator`, and any files matching `'.env*'`."
         
         :param relative_path: the relative path to the directory to list; pass "." to scan the project root
         :param recursive: whether to scan subdirectories recursively
@@ -120,7 +120,7 @@ class ListDirTool(Tool):
         # Define specific logic to always ignore certain paths
         def is_always_ignored_dir(path: str) -> bool:
             name = os.path.basename(path)
-            return name in ("node_modules", ".venv")
+            return name in ("node_modules", ".venv", ".git", ".next", ".actovator")
 
         def is_always_ignored_file(path: str) -> bool:
             name = os.path.basename(path)
