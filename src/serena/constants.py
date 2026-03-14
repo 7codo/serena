@@ -37,6 +37,6 @@ LOG_LEVEL = 20
 TRACE_LSP_COMMUNICATION = False
 LS_SPECIFIC_SETTINGS = {}
 DEFAULT_MAX_TOOL_ANSWER_CHARS = 150000
-IGNORED_PATHS = [".actovator"]
+IGNORED_PATHS = [] # don't ignore .actovator because we need it to read prd, and specs docs
 IGNORE_ALL_FILES_IN_GITIGNORE = True
 ALWAYS_IGNORE_DIRS = {'node_modules', '.venv'}
