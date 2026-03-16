@@ -85,17 +85,6 @@ class ApplyMethodProtocol(Protocol):
         pass
 
 
-@dataclass(frozen=True, kw_only=True)
-class ToolCallContext:
-    """
-    Optional request context information for a tool call.
-
-    This is transport-agnostic (HTTP, CLI, etc.) and replaces the previous MCP context coupling.
-    """
-
-    client_str: str | None = None
-
-
 class Tool(Component):
     # NOTE: each tool should implement the apply method, which is then used in
     # the central method of the Tool class `apply_ex`.
@@ -106,17 +95,6 @@ class Tool(Component):
     # The docstring and types of the apply method are used to generate the tool description
     # (which is use by the LLM, so a good description is important)
     # and to validate the tool call arguments.
-
-    _last_tool_call_client_str: str | None = None
-    """We can only get the client info from within a tool call. Each tool call will update this variable."""
-
-    @classmethod
-    def set_last_tool_call_client_str(cls, client_str: str | None) -> None:
-        cls._last_tool_call_client_str = client_str
-
-    @classmethod
-    def get_last_tool_call_client_str(cls) -> str | None:
-        return cls._last_tool_call_client_str
 
     @classmethod
     def get_name_from_cls(cls) -> str:
@@ -229,15 +207,12 @@ class Tool(Component):
         return self.agent.tool_is_active(self.get_name())
 
     def apply_ex(
-        self, log_call: bool = True, catch_exceptions: bool = True, request_ctx: ToolCallContext | None = None, **kwargs
+        self, log_call: bool = True, catch_exceptions: bool = True, **kwargs
     ) -> str:  # type: ignore
         """
         Applies the tool with logging and exception handling, using the given keyword arguments
         """
-        if request_ctx is not None and request_ctx.client_str is not None:
-            if request_ctx.client_str != self.get_last_tool_call_client_str():
-                log.debug(f"Updating client info: {request_ctx.client_str}")
-                self.set_last_tool_call_client_str(request_ctx.client_str)
+     
 
         def task() -> str:
             apply_fn = self.get_apply_fn()

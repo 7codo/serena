@@ -17,7 +17,6 @@ from sensai.util import logging
 
 from serena.agent import SerenaAgent
 from serena.tools import Tool
-from serena.tools.tools_base import ToolCallContext
 from serena.util.exception import show_fatal_exception_safe
 
 log = logging.getLogger(__name__)
@@ -115,15 +114,12 @@ class SerenaAPIFactory:
         def call_tool(
             tool_name: str,
             payload: dict[str, Any],
-            user_agent: str | None = Header(default=None, alias="User-Agent"),
-            x_serena_client: str | None = Header(default=None, alias="X-Serena-Client"),
+            
         ) -> dict[str, Any]:
             tool = next((t for t in self._iter_tools() if t.get_name() == tool_name), None)
             if tool is None:
                 raise HTTPException(status_code=404, detail=f"Unknown tool: {tool_name}")
 
-            client_str = x_serena_client or user_agent
-            request_ctx = ToolCallContext(client_str=client_str)
 
             # Validate args with the generated model; then execute.
             try:
@@ -131,7 +127,7 @@ class SerenaAPIFactory:
             except Exception as e:
                 raise HTTPException(status_code=422, detail=str(e)) from e
 
-            result = tool.apply_ex(log_call=True, catch_exceptions=True, request_ctx=request_ctx, **args)
+            result = tool.apply_ex(log_call=True, catch_exceptions=True, **args)
             return {"result": result}
 
         return app
