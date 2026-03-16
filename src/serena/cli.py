@@ -14,7 +14,7 @@ from serena.constants import (
     TRACE_LSP_COMMUNICATION,
     SERENA_LOG_FORMAT,
 )
-from serena.mcp import SerenaMCPFactory
+from serena.mcp import SerenaAPIFactory
 
 log = logging.getLogger(__name__)
 
@@ -98,24 +98,21 @@ class TopLevelCommands(AutoRegisteringGroup):
         super().__init__(name="serena", help="Serena CLI commands. You can run `<command> --help` for more info on each command.")
 
     @staticmethod
-    @click.command("start-mcp-server", help="Starts the Serena MCP server.")
+    @click.command("start-server", help="Starts the Serena FastAPI server.")
     @click.option("--project", "project", type=PROJECT_TYPE, default=None, help="Path or name of project to activate at startup.")
-    @click.option(
-        "--transport",
-        type=click.Choice(["stdio", "sse", "streamable-http"]),
-        default="stdio",
-        show_default=True,
-        help="Transport protocol.",
-    )
     @click.option(
         "--host",
         type=str,
         default="0.0.0.0",
         show_default=True,
-        help="Listen address for the MCP server (when using corresponding transport).",
+        help="Listen address for the server.",
     )
     @click.option(
-        "--port", type=int, default=8000, show_default=True, help="Listen port for the MCP server (when using corresponding transport)."
+        "--port",
+        type=int,
+        default=8000,
+        show_default=True,
+        help="Listen port for the server.",
     )
     @click.option(
         "--log-level",
@@ -123,9 +120,8 @@ class TopLevelCommands(AutoRegisteringGroup):
         default=None,
         help="Override log level in config.",
     )
-    def start_mcp_server(
+    def start_server(
         project: str | None,
-        transport: Literal["stdio", "sse", "streamable-http"],
         host: str,
         port: int,
         log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None,
@@ -146,21 +142,21 @@ class TopLevelCommands(AutoRegisteringGroup):
         file_handler.formatter = formatter
         Logger.root.addHandler(file_handler)
 
-        log.info("Initializing Serena MCP server")
+        log.info("Initializing Serena server (FastAPI)")
         # log.info("Storing logs in %s", log_path)
 
         
-        factory = SerenaMCPFactory(project=project)
-        server = factory.create_mcp_server(
-            host=host,
-            port=port,
+        factory = SerenaAPIFactory(project=project)
+        app = factory.create_app(
             log_level=log_level,
             trace_lsp_communication=TRACE_LSP_COMMUNICATION,
             tool_timeout=TOOL_TIMEOUT,
         )
         
-        log.info("Starting MCP server …")
-        server.run(transport=transport)
+        log.info("Starting server …")
+        import uvicorn
+
+        uvicorn.run(app, host=host, port=port, log_level=(log_level or "info").lower())
 
 
 
@@ -172,7 +168,7 @@ class TopLevelCommands(AutoRegisteringGroup):
 
 # Expose toplevel commands for the same reason
 top_level = TopLevelCommands()
-start_mcp_server = top_level.start_mcp_server
+start_server = top_level.start_server
 
 
 def get_help() -> str:

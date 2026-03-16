@@ -4,11 +4,9 @@ from abc import ABC
 from collections.abc import Iterable
 from dataclasses import dataclass
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Protocol, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, Self, TypeVar
 
-from mcp import Implementation
-from mcp.server.fastmcp import Context
-from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, func_metadata
+from pydantic import BaseModel, Field, create_model
 from sensai.util import logging
 from sensai.util.string import dict_string
 
@@ -87,6 +85,17 @@ class ApplyMethodProtocol(Protocol):
         pass
 
 
+@dataclass(frozen=True, kw_only=True)
+class ToolCallContext:
+    """
+    Optional request context information for a tool call.
+
+    This is transport-agnostic (HTTP, CLI, etc.) and replaces the previous MCP context coupling.
+    """
+
+    client_str: str | None = None
+
+
 class Tool(Component):
     # NOTE: each tool should implement the apply method, which is then used in
     # the central method of the Tool class `apply_ex`.
@@ -128,15 +137,6 @@ class Tool(Component):
         return apply_fn
 
     @classmethod
-    def can_edit(cls) -> bool:
-        """
-        Returns whether this tool can perform editing operations on code.
-
-        :return: True if the tool can edit code, False otherwise
-        """
-        return issubclass(cls, ToolMarkerCanEdit)
-
-    @classmethod
     def get_tool_description(cls) -> str:
         docstring = cls.__doc__
         if docstring is None:
@@ -166,25 +166,40 @@ class Tool(Component):
         """Gets the docstring for the tool application, used by the MCP server."""
         return self.get_apply_docstring_from_cls()
 
-    def get_apply_fn_metadata(self) -> FuncMetadata:
-        """Gets the metadata for the tool application function, used by the MCP server."""
-        return self.get_apply_fn_metadata_from_cls()
-
     @classmethod
-    def get_apply_fn_metadata_from_cls(cls) -> FuncMetadata:
-        """Get the metadata for the apply method from the class (static metadata).
-        Needed for creating MCP tools in a separate process without running into serialization issues.
-        """
+    def _get_apply_fn_from_cls(cls) -> Any:
         # First try to get from __dict__ to handle dynamic docstring changes
         if "apply" in cls.__dict__:
-            apply_fn = cls.__dict__["apply"]
-        else:
-            # Fall back to getattr for inherited methods
-            apply_fn = getattr(cls, "apply", None)
-            if apply_fn is None:
-                raise AttributeError(f"apply method not defined in {cls}. Did you forget to implement it?")
+            return cls.__dict__["apply"]
+        apply_fn = getattr(cls, "apply", None)
+        if apply_fn is None:
+            raise AttributeError(f"apply method not defined in {cls}. Did you forget to implement it?")
+        return apply_fn
 
-        return func_metadata(apply_fn, skip_names=["self", "cls"])
+    @classmethod
+    def get_apply_arg_model_from_cls(cls) -> type[BaseModel]:
+        """
+        Build a Pydantic model for the apply() arguments based on its signature.
+
+        This replaces the previous dependency on MCP's func_metadata utilities.
+        """
+        apply_fn = cls._get_apply_fn_from_cls()
+        sig = inspect.signature(apply_fn)
+
+        fields: dict[str, tuple[Any, Any]] = {}
+        for name, param in sig.parameters.items():
+            if name in {"self", "cls"}:
+                continue
+            ann = param.annotation if param.annotation is not inspect._empty else Any  # noqa: SLF001
+            default = param.default if param.default is not inspect._empty else ...  # noqa: SLF001
+            fields[name] = (ann, default)
+
+        model_name = f"{cls.__name__}ApplyArgs"
+        # Use Field() as the default wrapper when we later add descriptions in the HTTP layer.
+        return create_model(model_name, **{k: (t, Field(default=v) if v is not ... else Field(...)) for k, (t, v) in fields.items()})
+
+    def get_apply_arg_model(self) -> type[BaseModel]:
+        return self.get_apply_arg_model_from_cls()
 
     def _log_tool_application(self, frame: Any) -> None:
         params = {}
@@ -213,21 +228,16 @@ class Tool(Component):
     def is_active(self) -> bool:
         return self.agent.tool_is_active(self.get_name())
 
-    def apply_ex(self, log_call: bool = True, catch_exceptions: bool = True, mcp_ctx: Context | None = None, **kwargs) -> str:  # type: ignore
+    def apply_ex(
+        self, log_call: bool = True, catch_exceptions: bool = True, request_ctx: ToolCallContext | None = None, **kwargs
+    ) -> str:  # type: ignore
         """
         Applies the tool with logging and exception handling, using the given keyword arguments
         """
-        if mcp_ctx is not None:
-            try:
-                client_params = mcp_ctx.session.client_params
-                if client_params is not None:
-                    client_info = cast(Implementation, client_params.clientInfo)
-                    client_str = client_info.title if client_info.title else client_info.name + " " + client_info.version
-                    if client_str != self.get_last_tool_call_client_str():
-                        log.debug(f"Updating client info: {client_info}")
-                        self.set_last_tool_call_client_str(client_str)
-            except BaseException as e:
-                log.info(f"Failed to get client info: {e}.")
+        if request_ctx is not None and request_ctx.client_str is not None:
+            if request_ctx.client_str != self.get_last_tool_call_client_str():
+                log.debug(f"Updating client info: {request_ctx.client_str}")
+                self.set_last_tool_call_client_str(request_ctx.client_str)
 
         def task() -> str:
             apply_fn = self.get_apply_fn()
