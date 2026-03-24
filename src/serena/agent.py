@@ -17,7 +17,7 @@ from serena.task_executor import TaskExecutor
 from serena.tools import ReplaceContentTool, Tool, ToolMarker, ToolRegistry
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_config import Language
-from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION , LS_SPECIFIC_SETTINGS, SERENA_MANAGED_DIR_NAME
+from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION, LS_SPECIFIC_SETTINGS, SERENA_MANAGED_DIR_NAME
 
 log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
@@ -79,7 +79,6 @@ class ToolSet:
 
         return cls(set(ToolRegistry().get_tool_names_default_enabled()))
 
-
     def get_tool_names(self) -> set[str]:
         """
         Returns the names of the tools that are currently included in the tool set.
@@ -104,12 +103,11 @@ class SerenaAgent:
             The context may adjust prompts, tool availability, and tool descriptions.
         :param modes: list of modes in which the agent is operating (they will be combined), None for default modes.
             The modes may adjust prompts, tool availability, and tool descriptions.
-        
+
         """
         self.project = project
         # project-specific instances, which will be initialized upon project activation
         self._active_project: Project | None = None
-
 
         # instantiate all tool classes
         self._all_tools: dict[type[Tool], Tool] = {tool_class: tool_class(self) for tool_class in ToolRegistry().get_all_tool_classes()}
@@ -117,7 +115,7 @@ class SerenaAgent:
         log.info(f"Loaded tools ({len(self._all_tools)}): {', '.join([tool.get_name_from_cls() for tool in self._all_tools.values()])}")
 
         self._check_shell_settings()
-        
+
         self._exposed_tools = AvailableTools(self._all_tools.values())
         log.info(f"Number of exposed tools: {len(self._exposed_tools)}")
 
@@ -138,13 +136,11 @@ class SerenaAgent:
         # update active modes and active tools (considering the active project, if any)
         # declared attributes are set in the call to _update_active_modes_and_tools()
         self._active_tools: AvailableTools
-        
-    
+
     def get_config_file_path(self):
         path_to_serena_data_folder = os.path.join(self.get_project_root(), SERENA_MANAGED_DIR_NAME)
         serena_data_config_path = os.path.join(path_to_serena_data_folder, "config.json")
         return Path(serena_data_config_path)
-    
 
     def get_current_tasks(self) -> list[TaskExecutor.TaskInfo]:
         """
@@ -171,11 +167,7 @@ class SerenaAgent:
     def get_language_server_manager_or_raise(self) -> LanguageServerManager:
         language_server_manager = self.get_language_server_manager()
         if language_server_manager is None:
-            raise Exception(
-                "The language server manager is not initialized, indicating a problem during project activation. "
-                "Inform the user, telling them to inspect Serena's logs in order to determine the issue. "
-                "IMPORTANT: Wait for further instructions before you continue!"
-            )
+            self.activate_project()
         return language_server_manager
 
     def _check_shell_settings(self) -> None:
@@ -192,7 +184,7 @@ class SerenaAgent:
         """
         :return: the root directory of the active project (if any); raises a ValueError if there is no active project
         """
-        
+
         return self.project
 
     def get_exposed_tool_instances(self) -> list["Tool"]:
@@ -212,7 +204,7 @@ class SerenaAgent:
         """
         log.info(f"get_active_project {self._active_project}")
         return self._active_project
-    
+
     def get_active_project_or_raise(self) -> Project:
         """
         :return: the active project or raises an exception if no project is active
@@ -259,16 +251,18 @@ class SerenaAgent:
         else:
             # Save to persistent state file
             self._save_languages_to_state(languages)
-            
+
         log.info(f"Activating project with languages: {languages}")
         if self._active_project is None:
             from .project import Project
+
             log.info(f"Creating new project instance for root: {self.get_project_root()}")
             project = Project(self.get_project_root())
             self._active_project = project
             log.info("Project instance created successfully")
-        
+
         log.info("Starting language server initialization")
+
         # start the language server SYNCHRONOUSLY (not async)
         def init_language_server_manager() -> None:
             # start the language server
@@ -276,17 +270,15 @@ class SerenaAgent:
                 self.reset_language_server_manager(languages=languages)
 
         # initialize the language server in the background (if in language server mode)
-        
+
         self.issue_task(init_language_server_manager)
         log.info("Language server initialization completed")
 
         if self._project_activation_callback is not None:
             log.info("Calling project activation callback")
             self._project_activation_callback()
-        
-        
+
         log.info("Project activation completed")
-            
 
     def _save_languages_to_state(self, languages: list[str]) -> None:
         """Save languages to a persistent state file."""
@@ -294,15 +286,15 @@ class SerenaAgent:
             state = {}
             if self.get_config_file_path().exists():
                 state = json.loads(self.get_config_file_path().read_text())
-            
+
             state["languages"] = languages
-            
+
             self.get_config_file_path().write_text(json.dumps(state))
-            
+
             log.info(f"Saved state to {self.get_config_file_path()}: {state}")
         except Exception as e:
             log.error(f"Failed to save state: {e}")
-    
+
     def _load_languages_from_state(self) -> list[str]:
         """Load languages from persistent state file."""
         try:
@@ -314,7 +306,7 @@ class SerenaAgent:
         except Exception as e:
             log.error(f"Failed to load state: {e}")
         return []
-    
+
     def reset_language_server_manager(self, languages: list[str] | None = None) -> None:
         """
         Starts/resets the language server manager for the current project
@@ -332,13 +324,13 @@ class SerenaAgent:
     def determine_languages(
         self,
     ) -> list[str]:
-       
+
         project_root = Path(self.get_project_root()).resolve()
         if not project_root.exists():
             raise FileNotFoundError(f"Project root not found: {project_root}")
         with LogTime("Project configuration auto-generation", logger=log):
             log.info("Project root: %s", project_root)
-            
+
             # determine languages automatically
             log.info("Determining programming languages used in the project")
             language_composition = determine_programming_language_composition(str(project_root))
@@ -362,7 +354,7 @@ class SerenaAgent:
             top_language_pair = languages_and_percentages[0] if languages_and_percentages else None
             languages_to_use: list[str] = [top_language_pair[0].value] if top_language_pair else []
             # if in interactive mode, ask the user which other languages to enable
-            
+
             log.info("Using languages: %s", languages_to_use)
             return languages_to_use
 
