@@ -59,9 +59,9 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
     def apply(self, relative_path: str, content: str, enable_human_verification: bool) -> str:
         """
         Write a new file or overwrite an existing file.
-        
+
         **IMPORTANT**: If the `enable_human_verification` set to true (default is false), the content will be sent to the user for verification. The user can then accept, edit, or reject it. **Remember: only set this to true if EXPLICITLY requested by the user."**
-        
+
         :param relative_path: the relative path to the file to create
         :param content: the (appropriately encoded) content to write to the file
         :param enable_human_verification: wether to enable human in the loop or not
@@ -74,9 +74,9 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
         if will_overwrite_existing:
             self.project.validate_relative_path(relative_path, require_not_ignored=True)
         else:
-            assert abs_path.is_relative_to(
-                self.get_project_root()
-            ), f"Cannot create file outside of the project directory, got {relative_path=}"
+            assert abs_path.is_relative_to(self.get_project_root()), (
+                f"Cannot create file outside of the project directory, got {relative_path=}"
+            )
 
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_text(content, encoding=SERENA_FILE_ENCODING)
@@ -95,9 +95,9 @@ class ListDirTool(Tool):
     def apply(self, relative_path: str, recursive: bool, skip_ignored_files: bool = False, max_answer_chars: int = -1) -> str:
         """
         Lists files and directories in the given directory (optionally with recursion).
-        
-        "**IMPORTANT:** The following paths are always ignored: `node_modules/`, `.venv/`, `.git`, `.next`, `.actovator`, and any files matching `'.env*'`."
-        
+
+        "**IMPORTANT:** The following paths are always ignored: `node_modules/`, `.venv/`, `.git`, `.next`, `actovator`, and any files matching `'.env*'`."
+
         :param relative_path: the relative path to the directory to list; pass "." to scan the project root
         :param recursive: whether to scan subdirectories recursively
         :param skip_ignored_files: whether to skip files and directories that are ignored by the project settings
@@ -120,7 +120,7 @@ class ListDirTool(Tool):
         # Define specific logic to always ignore certain paths
         def is_always_ignored_dir(path: str) -> bool:
             name = os.path.basename(path)
-            return name in ("node_modules", ".venv", ".git", ".next", ".actovator")
+            return name in ("node_modules", ".venv", ".git", ".next", "actovator")
 
         def is_always_ignored_file(path: str) -> bool:
             name = os.path.basename(path)

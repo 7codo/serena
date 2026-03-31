@@ -3,7 +3,7 @@ from pathlib import Path
 _repo_root_path = Path(__file__).parent.parent.parent.resolve()
 _serena_pkg_path = Path(__file__).parent.resolve()
 
-SERENA_MANAGED_DIR_NAME = ".actovator"
+SERENA_MANAGED_DIR_NAME = "actovator"
 
 # TODO: Path-related constants should be moved to SerenaPaths; don't add further constants here.
 REPO_ROOT = str(_repo_root_path)
@@ -32,11 +32,11 @@ LOG_MESSAGES_BUFFER_SIZE = 2500
 """The maximum number of log messages to keep in the buffer (for the dashboard)."""
 
 # DEFAULT CONFIG
-TOOL_TIMEOUT=240
+TOOL_TIMEOUT = 240
 LOG_LEVEL = 20
 TRACE_LSP_COMMUNICATION = False
 LS_SPECIFIC_SETTINGS = {}
 DEFAULT_MAX_TOOL_ANSWER_CHARS = 150000
-IGNORED_PATHS = [] # don't ignore .actovator because we need it to read prd, and specs docs
+IGNORED_PATHS = []  # don't ignore actovator because we need it to read prd, and specs docs
 IGNORE_ALL_FILES_IN_GITIGNORE = True
-ALWAYS_IGNORE_DIRS = {'node_modules', '.venv'}
+ALWAYS_IGNORE_DIRS = {"node_modules", ".venv"}
