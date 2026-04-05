@@ -56,15 +56,12 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
     Creates/overwrites a file in the project directory.
     """
 
-    def apply(self, relative_path: str, content: str, enable_human_verification: bool) -> str:
+    def apply(self, relative_path: str, content: str) -> str:
         """
         Write a new file or overwrite an existing file.
 
-        **IMPORTANT**: If the `enable_human_verification` set to true (default is false), the content will be sent to the user for verification. The user can then accept, edit, or reject it. **Remember: only set this to true if EXPLICITLY requested by the user."**
-
         :param relative_path: the relative path to the file to create
         :param content: the (appropriately encoded) content to write to the file
-        :param enable_human_verification: wether to enable human in the loop or not
         :return: a message indicating success or failure
         """
         project_root = self.get_project_root()
