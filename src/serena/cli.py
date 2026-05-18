@@ -138,9 +138,9 @@ class TopLevelCommands(AutoRegisteringGroup):
         stderr_handler.formatter = formatter
         Logger.root.addHandler(stderr_handler)
         
-        file_handler = logging.FileHandler(f"/home/user/serena.log", mode="w")
-        file_handler.formatter = formatter
-        Logger.root.addHandler(file_handler)
+        # file_handler = logging.FileHandler(f"/home/user/serena.log", mode="w")
+        # file_handler.formatter = formatter
+        # Logger.root.addHandler(file_handler)
 
         log.info("Initializing Serena server (FastAPI)")
         # log.info("Storing logs in %s", log_path)

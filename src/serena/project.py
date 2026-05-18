@@ -8,7 +8,7 @@ import pathspec
 from sensai.util.logging import LogTime
 from sensai.util.string import ToStringMixin
 
-from serena.constants import SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
+from serena.constants import SERENA_CONFIG_DIR_NAME, SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
 from serena.ls_manager import LanguageServerFactory, LanguageServerManager
 from serena.text_utils import MatchedConsecutiveLines, search_files
 from serena.util.file_system import GitignoreParser, match_path
@@ -17,7 +17,6 @@ from solidlsp.ls_config import Language
 from solidlsp.ls_utils import FileUtils
 
 log = logging.getLogger(__name__)
-
 
 
 class Project(ToStringMixin):
@@ -35,7 +34,7 @@ class Project(ToStringMixin):
             log.info(f"Creating .gitignore file in {serena_data_gitignore_path}")
             with open(serena_data_gitignore_path, "w", encoding="utf-8") as f:
                 f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\nconfig.json\n")
-        
+
         self.__ignore_spec: pathspec.PathSpec
         self.__ignored_patterns: list[str]
         self._ignore_spec_available = threading.Event()
@@ -47,10 +46,8 @@ class Project(ToStringMixin):
     def _tostring_additional_entries(self) -> dict[str, Any]:
         return {"root": self.project_root}
 
-
     def path_to_serena_data_folder(self) -> str:
-        return os.path.join(self.project_root, SERENA_MANAGED_DIR_NAME)
-
+        return Path.home() / SERENA_CONFIG_DIR_NAME
 
     def read_file(self, relative_path: str) -> str:
         """
@@ -96,7 +93,7 @@ class Project(ToStringMixin):
             raise FileNotFoundError(f"File {abs_path} not found, the ignore check cannot be performed")
 
         # Check file extension if it's a file
-       
+
         # Create normalized path for consistent handling
         rel_path = Path(relative_path)
 
@@ -211,8 +208,6 @@ class Project(ToStringMixin):
                         )
             return rel_file_paths
 
-
-
     def search_source_files_for_pattern(
         self,
         pattern: str,
@@ -244,13 +239,13 @@ class Project(ToStringMixin):
             paths_include_glob=paths_include_glob,
             paths_exclude_glob=paths_exclude_glob,
         )
-        
+
     def _gather_ignorespec(self) -> None:
         with LogTime(f"Gathering ignore spec for project", logger=log):
 
             # gather ignored paths from the global configuration, project configuration, and gitignore files
             # global_ignored_paths = IGNORED_PATHS
-            
+
             ignored_patterns = list(IGNORED_PATHS)
             if len(IGNORED_PATHS) > 0:
                 log.info(f"Using {len(IGNORED_PATHS)} ignored paths from the global configuration.")
@@ -310,7 +305,7 @@ class Project(ToStringMixin):
             log.info("Ignore patterns are now available for project; proceeding")
             self._ignore_spec_available.wait()
         return self.__ignored_patterns
-    
+
     def create_language_server_manager(
         self,
         languages: list[str] = [],
@@ -346,7 +341,7 @@ class Project(ToStringMixin):
         )
         if len(languages) == 0:
             raise Exception("Languages required")
-        
+
         langs = self.languages_mapping(languages)
         self.language_server_manager = LanguageServerManager.from_languages(langs, factory)
         return self.language_server_manager
@@ -387,7 +382,6 @@ class Project(ToStringMixin):
 
         :param language: the programming language to add
         """
-        
 
         # start the language server (if the LS manager is active)
         if self.language_server_manager is None:
@@ -395,7 +389,6 @@ class Project(ToStringMixin):
         else:
             log.info("Adding and starting the language server for new language %s ...", language.value)
             self.language_server_manager.add_language_server(language)
-
 
     def remove_language(self, language: Language) -> None:
         """
@@ -405,14 +398,14 @@ class Project(ToStringMixin):
 
         :param language: the programming language to remove
         """
-        
+
         # stop the language server (if the LS manager is active)
         if self.language_server_manager is None:
             log.info("Language server manager is not active; skipping language server shutdown for the removed language.")
         else:
             log.info("Removing and stopping the language server for language %s ...", language.value)
             self.language_server_manager.remove_language_server(language)
-            
+
     def shutdown(self, timeout: float = 2.0) -> None:
         if self.language_server_manager is not None:
             self.language_server_manager.stop_all(save_cache=True, timeout=timeout)

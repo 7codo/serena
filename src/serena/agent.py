@@ -17,7 +17,14 @@ from serena.task_executor import TaskExecutor
 from serena.tools import ReplaceContentTool, Tool, ToolMarker, ToolRegistry
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_config import Language
-from serena.constants import TOOL_TIMEOUT, LOG_LEVEL, TRACE_LSP_COMMUNICATION, LS_SPECIFIC_SETTINGS, SERENA_MANAGED_DIR_NAME
+from serena.constants import (
+    SERENA_CONFIG_DIR_NAME,
+    TOOL_TIMEOUT,
+    LOG_LEVEL,
+    TRACE_LSP_COMMUNICATION,
+    LS_SPECIFIC_SETTINGS,
+    SERENA_MANAGED_DIR_NAME,
+)
 
 log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
@@ -138,9 +145,9 @@ class SerenaAgent:
         self._active_tools: AvailableTools
 
     def get_config_file_path(self):
-        path_to_serena_data_folder = os.path.join(self.get_project_root(), SERENA_MANAGED_DIR_NAME)
-        serena_data_config_path = os.path.join(path_to_serena_data_folder, "config.json")
-        return Path(serena_data_config_path)
+        path_to_serena_data_folder = Path.home() / SERENA_CONFIG_DIR_NAME
+        serena_data_config_path = path_to_serena_data_folder / "config.json"
+        return serena_data_config_path
 
     def get_current_tasks(self) -> list[TaskExecutor.TaskInfo]:
         """
