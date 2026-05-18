@@ -44,7 +44,7 @@ class LanguageServerFactory:
         home_dir = str(Path.home() / SERENA_MANAGED_DIR_NAME)
         return SolidLanguageServer.create(
             ls_config,
-            str(Path.home()),
+            self.project_root,
             timeout=self.ls_timeout,
             solidlsp_settings=SolidLSPSettings(
                 solidlsp_dir=home_dir,

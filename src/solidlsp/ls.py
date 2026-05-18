@@ -475,7 +475,7 @@ class SolidLanguageServer(ABC):
 
         # initialise symbol caches
         self.cache_dir = (
-            Path(self.repository_root_path) / self._solidlsp_settings.project_data_relative_path / self.CACHE_FOLDER_NAME / self.language_id
+            Path.home() / self._solidlsp_settings.project_data_relative_path / self.CACHE_FOLDER_NAME / self.language_id
         )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         # * raw document symbols cache
