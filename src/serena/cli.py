@@ -133,35 +133,29 @@ class TopLevelCommands(AutoRegisteringGroup):
         # (Note that stdout must never be used for logging, as it is used by the MCP server to communicate with the client.)
         Logger.root.setLevel(logging.INFO)
         formatter = logging.Formatter(SERENA_LOG_FORMAT)
-        
+
         stderr_handler = logging.StreamHandler(stream=sys.stderr)
         stderr_handler.formatter = formatter
         Logger.root.addHandler(stderr_handler)
-        
-        # file_handler = logging.FileHandler(f"/home/user/serena.log", mode="w")
-        # file_handler.formatter = formatter
-        # Logger.root.addHandler(file_handler)
+
+        file_handler = logging.FileHandler(f"/home/user/serena.log", mode="w")
+        file_handler.formatter = formatter
+        Logger.root.addHandler(file_handler)
 
         log.info("Initializing Serena server (FastAPI)")
         # log.info("Storing logs in %s", log_path)
 
-        
         factory = SerenaAPIFactory(project=project)
         app = factory.create_app(
             log_level=log_level,
             trace_lsp_communication=TRACE_LSP_COMMUNICATION,
             tool_timeout=TOOL_TIMEOUT,
         )
-        
+
         log.info("Starting server …")
         import uvicorn
 
         uvicorn.run(app, host=host, port=port, log_level=(log_level or "info").lower())
-
-
-
-
-
 
 
 # Expose groups so we can reference them in pyproject.toml
