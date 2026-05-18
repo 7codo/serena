@@ -4,7 +4,6 @@ _repo_root_path = Path(__file__).parent.parent.parent.resolve()
 _serena_pkg_path = Path(__file__).parent.resolve()
 
 SERENA_MANAGED_DIR_NAME = ".actovator"
-SERENA_CONFIG_DIR_NAME = ".actovator_data"
 
 # TODO: Path-related constants should be moved to SerenaPaths; don't add further constants here.
 REPO_ROOT = str(_repo_root_path)

@@ -8,7 +8,7 @@ import pathspec
 from sensai.util.logging import LogTime
 from sensai.util.string import ToStringMixin
 
-from serena.constants import SERENA_CONFIG_DIR_NAME, SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
+from serena.constants import SERENA_MANAGED_DIR_NAME, SERENA_MANAGED_DIR_NAME, TOOL_TIMEOUT, IGNORED_PATHS, IGNORE_ALL_FILES_IN_GITIGNORE
 from serena.ls_manager import LanguageServerFactory, LanguageServerManager
 from serena.text_utils import MatchedConsecutiveLines, search_files
 from serena.util.file_system import GitignoreParser, match_path
@@ -47,7 +47,7 @@ class Project(ToStringMixin):
         return {"root": self.project_root}
 
     def path_to_serena_data_folder(self) -> str:
-        return Path.home() / SERENA_CONFIG_DIR_NAME
+        return Path.home() / SERENA_MANAGED_DIR_NAME
 
     def read_file(self, relative_path: str) -> str:
         """
