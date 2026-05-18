@@ -41,14 +41,10 @@ class LanguageServerFactory:
 
         log.info(f"Creating language server instance for {self.project_root}, language={language}.")
         # home_dir = os.getenv("SERENA_HOME")
-        # if home_dir is None or home_dir.strip() == "":
         home_dir = str(Path.home() / SERENA_MANAGED_DIR_NAME)
-        # else:
-        #     home_dir = home_dir.strip()
-
         return SolidLanguageServer.create(
             ls_config,
-            self.project_root,
+            str(Path.home()),
             timeout=self.ls_timeout,
             solidlsp_settings=SolidLSPSettings(
                 solidlsp_dir=home_dir,
