@@ -137,8 +137,8 @@ class TopLevelCommands(AutoRegisteringGroup):
         stderr_handler = logging.StreamHandler(stream=sys.stderr)
         stderr_handler.formatter = formatter
         Logger.root.addHandler(stderr_handler)
-
-        file_handler = logging.FileHandler(f"/home/user/serena.log", mode="w")
+        home_path = Path.home()
+        file_handler = logging.FileHandler(f"{home_path}/serena.log", mode="a")
         file_handler.formatter = formatter
         Logger.root.addHandler(file_handler)
 

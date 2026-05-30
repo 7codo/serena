@@ -1,0 +1,1 @@
+uv run serena-server --project C:\\Users\\Admin\\Desktop\\code\\actovator\\my-app
