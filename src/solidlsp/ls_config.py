@@ -279,11 +279,11 @@ class Language(str, Enum):
                 from solidlsp.language_servers.omnisharp import OmniSharp
 
                 return OmniSharp
-            case self.TYPESCRIPT:
-                from solidlsp.language_servers.typescript_language_server import TypeScriptLanguageServer
+            # case self.TYPESCRIPT:
+            #     from solidlsp.language_servers.typescript_language_server import TypeScriptLanguageServer
 
-                return TypeScriptLanguageServer
-            case self.TYPESCRIPT_VTS:
+            #     return TypeScriptLanguageServer
+            case self.TYPESCRIPT | self.TYPESCRIPT_VTS:
                 from solidlsp.language_servers.vts_language_server import VtsLanguageServer
 
                 return VtsLanguageServer
