@@ -17,9 +17,15 @@ from solidlsp.lsp_protocol_handler.lsp_types import Definition, DefinitionParams
 from solidlsp.settings import SolidLSPSettings
 
 from ..lsp_protocol_handler import lsp_types
-from .common import RuntimeDependency, RuntimeDependencyCollection
+from .common import RuntimeDependency, RuntimeDependencyCollection, build_npm_install_command
 
 log = logging.getLogger(__name__)
+
+# Version pinning convention (see eclipse_jdtls.py for the full spec):
+#   INITIAL_* — frozen forever; legacy unversioned install dir is reserved for it.
+#   DEFAULT_* — bumped on upgrades; goes into a versioned subdir.
+INITIAL_INTELEPHENSE_VERSION = "1.14.4"
+DEFAULT_INTELEPHENSE_VERSION = "1.14.4"
 
 
 class Intelephense(SolidLanguageServer):
@@ -59,9 +65,12 @@ class Intelephense(SolidLanguageServer):
             assert is_node_installed, "node is not installed or isn't in PATH. Please install NodeJS and try again."
             is_npm_installed = shutil.which("npm") is not None
             assert is_npm_installed, "npm is not installed or isn't in PATH. Please install npm and try again."
+            intelephense_version = self._custom_settings.get("intelephense_version", DEFAULT_INTELEPHENSE_VERSION)
+            npm_registry = self._custom_settings.get("npm_registry")
 
-            # Install intelephense if not already installed
-            intelephense_ls_dir = os.path.join(self._ls_resources_dir, "php-lsp")
+            # legacy unversioned dir reserved for INITIAL; every other version goes into a versioned subdir
+            ls_dirname = "php-lsp" if intelephense_version == INITIAL_INTELEPHENSE_VERSION else f"php-lsp-{intelephense_version}"
+            intelephense_ls_dir = os.path.join(self._ls_resources_dir, ls_dirname)
             os.makedirs(intelephense_ls_dir, exist_ok=True)
             intelephense_executable_path = os.path.join(intelephense_ls_dir, "node_modules", ".bin", "intelephense")
             if not os.path.exists(intelephense_executable_path):
@@ -69,16 +78,16 @@ class Intelephense(SolidLanguageServer):
                     [
                         RuntimeDependency(
                             id="intelephense",
-                            command="npm install --prefix ./ intelephense@1.14.4",
+                            command=build_npm_install_command("intelephense", intelephense_version, npm_registry),
                             platform_id="any",
                         )
                     ]
                 )
                 deps.install(intelephense_ls_dir)
 
-            assert os.path.exists(
-                intelephense_executable_path
-            ), f"intelephense executable not found at {intelephense_executable_path}, something went wrong."
+            assert os.path.exists(intelephense_executable_path), (
+                f"intelephense executable not found at {intelephense_executable_path}, something went wrong."
+            )
 
             return intelephense_executable_path
 
@@ -112,8 +121,19 @@ class Intelephense(SolidLanguageServer):
                 "textDocument": {
                     "synchronization": {"didSave": True, "dynamicRegistration": True},
                     "definition": {"dynamicRegistration": True},
+                    "references": {"dynamicRegistration": True},
+                    "documentSymbol": {
+                        "dynamicRegistration": True,
+                        "hierarchicalDocumentSymbolSupport": True,
+                        "symbolKind": {"valueSet": list(range(1, 27))},
+                    },
+                    "hover": {"dynamicRegistration": True, "contentFormat": ["markdown", "plaintext"]},
                 },
-                "workspace": {"workspaceFolders": True, "didChangeConfiguration": {"dynamicRegistration": True}},
+                "workspace": {
+                    "workspaceFolders": True,
+                    "didChangeConfiguration": {"dynamicRegistration": True},
+                    "symbol": {"dynamicRegistration": True},
+                },
             },
             "processId": os.getpid(),
             "rootPath": repository_absolute_path,
@@ -167,9 +187,11 @@ class Intelephense(SolidLanguageServer):
         log.info("After sent initialize params")
 
         # Verify server capabilities
-        assert "textDocumentSync" in init_response["capabilities"]
-        assert "completionProvider" in init_response["capabilities"]
-        assert "definitionProvider" in init_response["capabilities"]
+        capabilities = init_response["capabilities"]
+        assert "textDocumentSync" in capabilities
+        assert "completionProvider" in capabilities
+        assert "definitionProvider" in capabilities
+        assert "documentSymbolProvider" in capabilities, "Server must support document symbols"
 
         self.server.notify.initialized({})
 

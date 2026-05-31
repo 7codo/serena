@@ -4,20 +4,23 @@ Contains various configurations and settings specific to Pascal and Free Pascal.
 
 pasls installation strategy:
 1. Use existing pasls from PATH
-2. Download prebuilt binary from GitHub releases (auto-updated)
+2. Download a pinned prebuilt binary from GitHub releases
 
 Supported platforms for binary download:
 - linux-x64, linux-arm64
 - osx-x64, osx-arm64
 - win-x64
 
-Auto-update features:
-- Checks for updates every 24 hours via GitHub API
+Integrity features:
 - SHA256 checksum verification before installation
 - Atomic update with rollback on failure
 - Windows file locking detection
 
 You can pass the following entries in ls_specific_settings["pascal"]:
+
+Version management:
+- pasls_version: Override the pinned pasls version downloaded by Serena
+  (default: the bundled Serena version).
 
 Environment variables (recommended for CodeTools configuration):
 - pp: Path to FPC compiler driver, must be "fpc.exe" (e.g., "D:/laz32/fpc/bin/i386-win32/fpc.exe").
@@ -50,6 +53,7 @@ import pathlib
 import platform
 import shutil
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.error
@@ -59,23 +63,54 @@ import zipfile
 
 from solidlsp.language_servers.common import RuntimeDependency, RuntimeDependencyCollection, quote_windows_path
 from solidlsp.ls import SolidLanguageServer
-from solidlsp.ls_config import LanguageServerConfig
+from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
 from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
 
+# Version pinning convention (see eclipse_jdtls.py for the full spec):
+#   INITIAL_* — frozen forever; legacy unversioned install dir is reserved for it.
+#   DEFAULT_* — bumped on upgrades; goes into a versioned subdir.
+INITIAL_PASLS_VERSION = "v0.2.0"
+INITIAL_PASLS_SHA256_BY_PLATFORM = {
+    "linux-x64": "517259395b0a385a5e848cf48b967645a984be3dd456118bc08771283a822a5b",
+    "linux-arm64": "cb4986941cfdcf9cb74ece6bbb53a443390a908e880108a37f4ccf82b2d6c502",
+    "osx-x64": "0abfcd98f63f77dba74094339a40d4407b69317c1c77b13a26b9b7dbdfd885f1",
+    "osx-arm64": "d4c2411e406af96ceae12b11e77fdb0c684ca15a68bfd8b4f9c6fe1fbdf515a7",
+    "win-x64": "1493c31552e6f90a59800b2d44669e01fc4551d3647f3cea5dd105a9f6bc73e5",
+}
+DEFAULT_PASLS_VERSION = "v0.2.0"
+DEFAULT_PASLS_SHA256_BY_PLATFORM = {
+    "linux-x64": "517259395b0a385a5e848cf48b967645a984be3dd456118bc08771283a822a5b",
+    "linux-arm64": "cb4986941cfdcf9cb74ece6bbb53a443390a908e880108a37f4ccf82b2d6c502",
+    "osx-x64": "0abfcd98f63f77dba74094339a40d4407b69317c1c77b13a26b9b7dbdfd885f1",
+    "osx-arm64": "d4c2411e406af96ceae12b11e77fdb0c684ca15a68bfd8b4f9c6fe1fbdf515a7",
+    "win-x64": "1493c31552e6f90a59800b2d44669e01fc4551d3647f3cea5dd105a9f6bc73e5",
+}
+PASLS_VERSION = DEFAULT_PASLS_VERSION
+
+
+def _pasls_sha(version: str, platform_key: str) -> str | None:
+    if version == INITIAL_PASLS_VERSION:
+        return INITIAL_PASLS_SHA256_BY_PLATFORM.get(platform_key)
+    if version == DEFAULT_PASLS_VERSION:
+        return DEFAULT_PASLS_SHA256_BY_PLATFORM.get(platform_key)
+    return None
+
 
 class PascalLanguageServer(SolidLanguageServer):
     """
     Provides Pascal specific instantiation of the LanguageServer class using pasls.
     Contains various configurations and settings specific to Free Pascal and Lazarus.
+    Supports overriding the bundled pasls version via ``pasls_version``.
     """
 
     # URL configuration
-    PASLS_RELEASES_URL = "https://github.com/zen010101/pascal-language-server/releases/latest/download"
-    PASLS_API_URL = "https://api.github.com/repos/zen010101/pascal-language-server/releases/latest"
+    PASLS_VERSION = PASLS_VERSION
+    PASLS_RELEASES_URL = f"https://github.com/zen010101/pascal-language-server/releases/download/{PASLS_VERSION}"
+    PASLS_API_URL = f"https://api.github.com/repos/zen010101/pascal-language-server/releases/tags/{PASLS_VERSION}"
 
     # Update check interval (seconds)
     UPDATE_CHECK_INTERVAL = 86400  # 24 hours
@@ -501,7 +536,7 @@ class PascalLanguageServer(SolidLanguageServer):
         """Atomic update: download -> verify checksum -> extract -> replace."""
         temp_dir = pasls_dir + ".tmp"
         backup_dir = pasls_dir + ".backup"
-        temp_archive_dir = os.path.join(os.path.expanduser("~"), "solidlsp_tmp")
+        temp_archive_dir = tempfile.mkdtemp(prefix="solidlsp_")
 
         try:
             dep = deps.get_single_dep_for_current_platform()
@@ -514,8 +549,6 @@ class PascalLanguageServer(SolidLanguageServer):
             # 1. Clean up any existing temp directory
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
-            os.makedirs(temp_archive_dir, exist_ok=True)
-
             # 2. Download archive
             log.info(f"Downloading pasls archive: {archive_filename}")
             if not cls._download_archive(dep.url, archive_path):
@@ -523,21 +556,18 @@ class PascalLanguageServer(SolidLanguageServer):
                 return False
 
             # 3. Verify SHA256 checksum (critical security step, before extraction)
-            if checksums:
-                expected_sha256 = checksums.get(archive_filename)
-                if expected_sha256:
-                    log.info(f"Verifying SHA256 checksum for {archive_filename}...")
-                    if not cls._verify_checksum(archive_path, expected_sha256):
-                        log.error(f"SHA256 checksum verification FAILED for {archive_filename}")
-                        log.error("Aborting installation due to checksum mismatch - possible security issue!")
-                        try:
-                            os.remove(archive_path)
-                        except OSError:
-                            pass
-                        return False
-                    log.info("SHA256 checksum verified successfully")
-                else:
-                    log.warning(f"No checksum found for {archive_filename} in checksums file")
+            expected_sha256 = checksums.get(archive_filename) if checksums else dep.sha256
+            if expected_sha256:
+                log.info(f"Verifying SHA256 checksum for {archive_filename}...")
+                if not cls._verify_checksum(archive_path, expected_sha256):
+                    log.error(f"SHA256 checksum verification FAILED for {archive_filename}")
+                    log.error("Aborting installation due to checksum mismatch - possible security issue!")
+                    try:
+                        os.remove(archive_path)
+                    except OSError:
+                        pass
+                    return False
+                log.info("SHA256 checksum verified successfully")
             else:
                 log.warning("No checksums available - skipping verification (not recommended for production)")
 
@@ -574,11 +604,7 @@ class PascalLanguageServer(SolidLanguageServer):
                         shutil.copytree(backup_meta, target_meta)
 
             # 9. Clean up downloaded archive and temp directory
-            try:
-                os.remove(archive_path)
-                os.rmdir(temp_archive_dir)
-            except OSError:
-                pass
+            shutil.rmtree(temp_archive_dir, ignore_errors=True)
 
             log.info("pasls installation completed successfully")
             return True
@@ -594,12 +620,13 @@ class PascalLanguageServer(SolidLanguageServer):
                 except Exception as rollback_error:
                     log.error(f"Rollback failed: {rollback_error}")
 
-            # Clean up temp directory
+            # Clean up temp directories
             if os.path.exists(temp_dir):
                 try:
                     shutil.rmtree(temp_dir)
                 except Exception:
                     pass
+            shutil.rmtree(temp_archive_dir, ignore_errors=True)
 
             return False
 
@@ -607,19 +634,30 @@ class PascalLanguageServer(SolidLanguageServer):
     def _setup_runtime_dependencies(cls, solidlsp_settings: SolidLSPSettings) -> str:
         """
         Setup runtime dependencies for Pascal Language Server (pasls).
-        Automatically checks for updates every 24 hours with security verification.
+        Downloads the pinned Serena-supported pasls release with checksum verification.
 
         Returns:
             str: The command to start the pasls server
 
         """
+        pascal_settings = solidlsp_settings.get_ls_specific_settings(Language.PASCAL)
+        pasls_version = pascal_settings.get("pasls_version", PASLS_VERSION)
+        cls.PASLS_VERSION = pasls_version
+        cls.PASLS_RELEASES_URL = f"https://github.com/zen010101/pascal-language-server/releases/download/{pasls_version}"
+        cls.PASLS_API_URL = f"https://api.github.com/repos/zen010101/pascal-language-server/releases/tags/{pasls_version}"
+
         # Check if pasls is already in PATH
         pasls_in_path = shutil.which("pasls")
         if pasls_in_path:
             log.info(f"Found pasls in PATH: {pasls_in_path}")
             return quote_windows_path(pasls_in_path)
 
-        pasls_dir = cls.ls_resources_dir(solidlsp_settings)
+        # legacy unversioned dir reserved for INITIAL; every other version goes into a versioned subdir
+        pasls_dir = (
+            cls.ls_resources_dir(solidlsp_settings)
+            if pasls_version == INITIAL_PASLS_VERSION
+            else os.path.join(cls.ls_resources_dir(solidlsp_settings), f"pasls-{pasls_version}")
+        )
         os.makedirs(pasls_dir, exist_ok=True)
 
         # Clean up old files from previous sessions
@@ -637,6 +675,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     platform_id="linux-x64",
                     archive_type="gztar",
                     binary_name="pasls",
+                    sha256=_pasls_sha(pasls_version, "linux-x64"),
                 ),
                 RuntimeDependency(
                     id="PascalLanguageServer",
@@ -645,6 +684,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     platform_id="linux-arm64",
                     archive_type="gztar",
                     binary_name="pasls",
+                    sha256=_pasls_sha(pasls_version, "linux-arm64"),
                 ),
                 RuntimeDependency(
                     id="PascalLanguageServer",
@@ -653,6 +693,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     platform_id="osx-x64",
                     archive_type="zip",
                     binary_name="pasls",
+                    sha256=_pasls_sha(pasls_version, "osx-x64"),
                 ),
                 RuntimeDependency(
                     id="PascalLanguageServer",
@@ -661,6 +702,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     platform_id="osx-arm64",
                     archive_type="zip",
                     binary_name="pasls",
+                    sha256=_pasls_sha(pasls_version, "osx-arm64"),
                 ),
                 RuntimeDependency(
                     id="PascalLanguageServer",
@@ -669,6 +711,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     platform_id="win-x64",
                     archive_type="zip",
                     binary_name="pasls.exe",
+                    sha256=_pasls_sha(pasls_version, "win-x64"),
                 ),
             ]
         )
@@ -762,6 +805,14 @@ class PascalLanguageServer(SolidLanguageServer):
             if value:
                 initialization_options[var] = value
 
+        initialization_options.update(
+            {
+                "checkSyntax": True,
+                "publishDiagnostics": True,
+                "showSyntaxErrors": True,
+            }
+        )
+
         initialize_params = {
             "locale": "en",
             "capabilities": {
@@ -816,6 +867,7 @@ class PascalLanguageServer(SolidLanguageServer):
                     },
                     "formatting": {"dynamicRegistration": True},
                     "rangeFormatting": {"dynamicRegistration": True},
+                    "publishDiagnostics": {"relatedInformation": True},
                 },
                 "workspace": {
                     "workspaceFolders": True,

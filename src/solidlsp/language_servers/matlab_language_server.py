@@ -37,13 +37,11 @@ import pathlib
 import platform
 import shutil
 import threading
-import zipfile
 from typing import Any, cast
-
-import requests
 
 from solidlsp.ls import LanguageServerDependencyProvider, LSPFileBuffer, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
+from solidlsp.ls_utils import FileUtils
 from solidlsp.lsp_protocol_handler.lsp_types import DocumentSymbol, InitializeParams, SymbolInformation
 from solidlsp.settings import SolidLSPSettings
 
@@ -52,10 +50,28 @@ log = logging.getLogger(__name__)
 # Environment variable for MATLAB installation path
 MATLAB_PATH_ENV_VAR = "MATLAB_PATH"
 
-# VS Code Marketplace URL for MATLAB extension
-MATLAB_EXTENSION_URL = (
-    "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/MathWorks/vsextensions/language-matlab/latest/vspackage"
-)
+MATLAB_EXTENSION_ALLOWED_HOSTS = ("marketplace.visualstudio.com",)
+
+# Version pinning convention (see eclipse_jdtls.py for the full spec):
+#   INITIAL_* — frozen forever; legacy unversioned install dir is reserved for it.
+#   DEFAULT_* — bumped on upgrades; goes into a versioned subdir.
+INITIAL_MATLAB_EXTENSION_VERSION = "1.3.9"
+INITIAL_MATLAB_EXTENSION_SHA256 = "1da3add2c3a593fa0ebcdf1d15231faee8014de10f549c36915ab9d4f18390f2"
+DEFAULT_MATLAB_EXTENSION_VERSION = "1.3.9"
+DEFAULT_MATLAB_EXTENSION_SHA256 = "1da3add2c3a593fa0ebcdf1d15231faee8014de10f549c36915ab9d4f18390f2"
+
+
+def _matlab_extension_sha(version: str) -> str | None:
+    if version == INITIAL_MATLAB_EXTENSION_VERSION:
+        return INITIAL_MATLAB_EXTENSION_SHA256
+    if version == DEFAULT_MATLAB_EXTENSION_VERSION:
+        return DEFAULT_MATLAB_EXTENSION_SHA256
+    return None
+
+
+def _matlab_extension_dirname(version: str) -> str:
+    # legacy unversioned dir reserved for INITIAL; every other version goes into a versioned subdir
+    return "matlab-extension" if version == INITIAL_MATLAB_EXTENSION_VERSION else f"matlab-extension-{version}"
 
 
 class MatlabLanguageServer(SolidLanguageServer):
@@ -72,6 +88,8 @@ class MatlabLanguageServer(SolidLanguageServer):
 
     You can pass the following entries in ls_specific_settings["matlab"]:
         - matlab_path: Path to MATLAB installation (overrides MATLAB_PATH env var)
+        - matlab_extension_version: Override the pinned MathWorks VS Code extension
+          version downloaded by Serena (default: the bundled Serena version)
     """
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
@@ -102,61 +120,23 @@ class MatlabLanguageServer(SolidLanguageServer):
             self._matlab_path: str | None = None
 
         @classmethod
-        def _download_matlab_extension(cls, url: str, target_dir: str) -> bool:
+        def _download_matlab_extension(cls, url: str, target_dir: str, expected_sha256: str | None) -> bool:
             """
             Download and extract the MATLAB extension from VS Code marketplace.
 
             The VS Code marketplace packages extensions as .vsix files (which are ZIP archives).
             This method downloads the VSIX file and extracts it to get the language server.
-
-            Args:
-                url: VS Code marketplace URL for the MATLAB extension
-                target_dir: Directory where the extension will be extracted
-
-            Returns:
-                True if successful, False otherwise
-
             """
             try:
                 log.info(f"Downloading MATLAB extension from {url}")
-
-                # Create target directory for the extension
                 os.makedirs(target_dir, exist_ok=True)
-
-                # Download with proper headers to mimic VS Code marketplace client
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Accept": "application/octet-stream, application/vsix, */*",
-                }
-
-                response = requests.get(url, headers=headers, stream=True, timeout=300)
-                response.raise_for_status()
-
-                # Save to temporary VSIX file
-                temp_file = os.path.join(target_dir, "matlab_extension_temp.vsix")
-                total_size = int(response.headers.get("content-length", 0))
-
-                log.info(f"Downloading {total_size / 1024 / 1024:.1f} MB...")
-
-                with open(temp_file, "wb") as f:
-                    downloaded = 0
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0 and downloaded % (10 * 1024 * 1024) == 0:
-                                progress = (downloaded / total_size) * 100
-                                log.info(f"Download progress: {progress:.1f}%")
-
-                log.info("Download complete, extracting...")
-
-                # Extract VSIX file (VSIX files are ZIP archives)
-                with zipfile.ZipFile(temp_file, "r") as zip_ref:
-                    zip_ref.extractall(target_dir)
-
-                # Clean up temp file
-                os.remove(temp_file)
-
+                FileUtils.download_and_extract_archive_verified(
+                    url,
+                    target_dir,
+                    "zip",
+                    expected_sha256=expected_sha256,
+                    allowed_hosts=MATLAB_EXTENSION_ALLOWED_HOSTS,
+                )
                 log.info("MATLAB extension extracted successfully")
                 return True
 
@@ -185,8 +165,9 @@ class MatlabLanguageServer(SolidLanguageServer):
             elif env_path:
                 log.warning(f"MATLAB_EXTENSION_PATH set but directory not found: {env_path}")
 
-            # Check default download location
-            default_path = os.path.join(self._ls_resources_dir, "matlab-extension", "extension")
+            # Check the resolved-version download location (versioned for non-INITIAL, legacy "matlab-extension" for INITIAL)
+            matlab_extension_version = self._custom_settings.get("matlab_extension_version", DEFAULT_MATLAB_EXTENSION_VERSION)
+            default_path = os.path.join(self._ls_resources_dir, _matlab_extension_dirname(matlab_extension_version), "extension")
             if os.path.exists(default_path):
                 log.debug(f"Found MATLAB extension in default location: {default_path}")
                 return default_path
@@ -212,11 +193,16 @@ class MatlabLanguageServer(SolidLanguageServer):
                 Path to installed extension or None if download failed
 
             """
-            matlab_extension_dir = os.path.join(self._ls_resources_dir, "matlab-extension")
+            matlab_extension_version = self._custom_settings.get("matlab_extension_version", DEFAULT_MATLAB_EXTENSION_VERSION)
+            matlab_extension_dir = os.path.join(self._ls_resources_dir, _matlab_extension_dirname(matlab_extension_version))
+            matlab_extension_url = (
+                "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/MathWorks/"
+                f"vsextensions/language-matlab/{matlab_extension_version}/vspackage"
+            )
 
-            log.info(f"Downloading MATLAB extension from: {MATLAB_EXTENSION_URL}")
+            log.info(f"Downloading MATLAB extension from: {matlab_extension_url}")
 
-            if self._download_matlab_extension(MATLAB_EXTENSION_URL, matlab_extension_dir):
+            if self._download_matlab_extension(matlab_extension_url, matlab_extension_dir, _matlab_extension_sha(matlab_extension_version)):
                 extension_path = os.path.join(matlab_extension_dir, "extension")
                 if os.path.exists(extension_path):
                     log.info("MATLAB extension downloaded and installed successfully")

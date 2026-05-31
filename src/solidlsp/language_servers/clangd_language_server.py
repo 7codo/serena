@@ -1,9 +1,13 @@
+import hashlib
 import json
 import logging
 import os
 import pathlib
 import threading
+from collections.abc import Hashable
 from typing import Any, cast
+
+from overrides import override
 
 from solidlsp.ls import LanguageServerDependencyProvider, LanguageServerDependencyProviderSinglePath, ProcessLaunchInfo, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
@@ -14,13 +18,54 @@ from .common import RuntimeDependency, RuntimeDependencyCollection
 
 log = logging.getLogger(__name__)
 
+CLANGD_ALLOWED_HOSTS = ("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
+
 
 class ClangdLanguageServer(SolidLanguageServer):
     """
     Provides C/C++ specific instantiation of the LanguageServer class. Contains various configurations and settings specific to C/C++.
     As the project gets bigger in size, building index will take time. Try running clangd multiple times to ensure index is built properly.
     Also make sure compile_commands.json is created at root of the source directory. Check clangd test case for example.
+
+    You can pass the following entries in ``ls_specific_settings["cpp"]``:
+        - compile_commands_dir: Directory where Serena writes its transformed
+          ``compile_commands.json`` if needed.
+        - clangd_version: Override the pinned Clangd version downloaded by Serena
+          (default: the bundled Serena version).
     """
+
+    @staticmethod
+    def _determine_log_level(line: str) -> int:
+        """
+        Classify a clangd stderr line using clangd's explicit level prefix.
+
+        See `clang::clangd::Logger::indicator` for details:
+        https://clang.llvm.org/extra/doxygen/classclang_1_1clangd_1_1Logger.html
+
+        Clangd emits each log record prefixed by a single indicator character
+        followed by a timestamp in square brackets, e.g. ``I[12:27:16.234]``.
+
+        The indicators are ``D`` (Debug), ``I`` (Info), ``E`` (Error) and
+        ``F`` (Fatal). Continuation lines of multi-line records carry no
+        prefix and are treated as informational.
+
+        Without this override, the base implementation scans the line for
+        the substrings ``error`` and ``exception``, which produces false
+        positives on clangd's reconstructed compile commands in some cases
+        (e.g. ``-DNO_EXCEPTIONS``, ``-fno-exceptions``).
+        """
+        # classify by clangd's level indicator character
+        if len(line) >= 2 and line[1] == "[":
+            indicator = line[0]
+            if indicator in ("E", "F"):
+                return logging.ERROR
+            if indicator == "I":
+                return logging.INFO
+            if indicator == "D":
+                return logging.DEBUG
+
+        # continuation line or non-prefixed output: default to INFO, do not keyword-scan
+        return logging.INFO
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
         """
@@ -31,6 +76,37 @@ class ClangdLanguageServer(SolidLanguageServer):
         self.service_ready_event = threading.Event()
         self.initialize_searcher_command_available = threading.Event()
         self.resolve_main_method_available = threading.Event()
+
+    @override
+    def _document_symbols_cache_fingerprint(self) -> Hashable:
+        cache_format_version = 1
+        cpp_settings: dict[str, Any] = self._custom_settings or {}
+        return (
+            cache_format_version,
+            cpp_settings.get("clangd_version"),
+            cpp_settings.get("ls_path"),
+            cpp_settings.get("compile_commands_dir"),
+            self._compile_commands_fingerprint(),
+        )
+
+    def _compile_commands_fingerprint(self) -> str | None:
+        compile_db_path = os.path.join(self.repository_root_path, "compile_commands.json")
+        if not os.path.exists(compile_db_path):
+            return None
+
+        try:
+            with open(compile_db_path, "rb") as f:
+                return hashlib.md5(f.read()).hexdigest()
+        except OSError as e:
+            log.warning(f"Failed to fingerprint compile_commands.json: {e}")
+            return None
+
+    @override
+    def is_ignored_dirname(self, dirname: str) -> bool:
+        ignored_dirs = [
+            ".ccls-cache",
+        ]
+        return super().is_ignored_dirname(dirname) or dirname in ignored_dirs
 
     def _prepare_compile_commands(self) -> str | None:
         """
@@ -125,39 +201,50 @@ class ClangdLanguageServer(SolidLanguageServer):
             """
             import shutil
 
+            clangd_version = self._custom_settings.get("clangd_version", "19.1.2")
+            default_version = clangd_version == "19.1.2"
+
             deps = RuntimeDependencyCollection(
                 [
                     RuntimeDependency(
                         id="Clangd",
                         description="Clangd for Linux (x64)",
-                        url="https://github.com/clangd/clangd/releases/download/19.1.2/clangd-linux-19.1.2.zip",
+                        url=f"https://github.com/clangd/clangd/releases/download/{clangd_version}/clangd-linux-{clangd_version}.zip",
                         platform_id="linux-x64",
                         archive_type="zip",
-                        binary_name="clangd_19.1.2/bin/clangd",
+                        binary_name=f"clangd_{clangd_version}/bin/clangd",
+                        sha256="7c09614eff857d590e4502ef516f035ff94cfb8b795de14ece5afbc53a206caf" if default_version else None,
+                        allowed_hosts=CLANGD_ALLOWED_HOSTS,
                     ),
                     RuntimeDependency(
                         id="Clangd",
                         description="Clangd for Windows (x64)",
-                        url="https://github.com/clangd/clangd/releases/download/19.1.2/clangd-windows-19.1.2.zip",
+                        url=f"https://github.com/clangd/clangd/releases/download/{clangd_version}/clangd-windows-{clangd_version}.zip",
                         platform_id="win-x64",
                         archive_type="zip",
-                        binary_name="clangd_19.1.2/bin/clangd.exe",
+                        binary_name=f"clangd_{clangd_version}/bin/clangd.exe",
+                        sha256="5b6ceb0f85d63fa0c2c9aab31c29bebd41dc11da1f160ef21bc2fea93270a20d" if default_version else None,
+                        allowed_hosts=CLANGD_ALLOWED_HOSTS,
                     ),
                     RuntimeDependency(
                         id="Clangd",
                         description="Clangd for macOS (x64)",
-                        url="https://github.com/clangd/clangd/releases/download/19.1.2/clangd-mac-19.1.2.zip",
+                        url=f"https://github.com/clangd/clangd/releases/download/{clangd_version}/clangd-mac-{clangd_version}.zip",
                         platform_id="osx-x64",
                         archive_type="zip",
-                        binary_name="clangd_19.1.2/bin/clangd",
+                        binary_name=f"clangd_{clangd_version}/bin/clangd",
+                        sha256="d3b329b3f58602c57ca6501d255147af1bccad3691b1cb0c12c258fcd2da1be3" if default_version else None,
+                        allowed_hosts=CLANGD_ALLOWED_HOSTS,
                     ),
                     RuntimeDependency(
                         id="Clangd",
                         description="Clangd for macOS (Arm64)",
-                        url="https://github.com/clangd/clangd/releases/download/19.1.2/clangd-mac-19.1.2.zip",
+                        url=f"https://github.com/clangd/clangd/releases/download/{clangd_version}/clangd-mac-{clangd_version}.zip",
                         platform_id="osx-arm64",
                         archive_type="zip",
-                        binary_name="clangd_19.1.2/bin/clangd",
+                        binary_name=f"clangd_{clangd_version}/bin/clangd",
+                        sha256="d3b329b3f58602c57ca6501d255147af1bccad3691b1cb0c12c258fcd2da1be3" if default_version else None,
+                        allowed_hosts=CLANGD_ALLOWED_HOSTS,
                     ),
                 ]
             )
@@ -228,7 +315,7 @@ class ClangdLanguageServer(SolidLanguageServer):
             "workspaceFolders": [
                 {
                     "uri": root_uri,
-                    "name": "$name",
+                    "name": os.path.basename(repository_absolute_path),
                 }
             ],
         }
@@ -293,12 +380,19 @@ class ClangdLanguageServer(SolidLanguageServer):
 
         log.info("Sending initialize request from LSP client to LSP server and awaiting response")
         init_response = self.server.send.initialize(initialize_params)
-        assert init_response["capabilities"]["textDocumentSync"]["change"] == 2  # type: ignore
-        assert "completionProvider" in init_response["capabilities"]
-        assert init_response["capabilities"]["completionProvider"] == {
-            "triggerCharacters": [".", "<", ">", ":", '"', "/", "*"],
-            "resolveProvider": False,
-        }
+        capabilities = init_response["capabilities"]
+
+        text_document_sync = capabilities["textDocumentSync"]
+        if isinstance(text_document_sync, int):
+            assert text_document_sync == 2  # type: ignore
+        else:
+            assert text_document_sync["change"] == 2  # type: ignore
+
+        assert "completionProvider" in capabilities
+        completion_provider = capabilities["completionProvider"]
+        trigger_characters = set(completion_provider["triggerCharacters"])
+        assert {".", "<", ">", ":", '"', "/"}.issubset(trigger_characters)
+        assert completion_provider["resolveProvider"] is False
 
         self.server.notify.initialized({})
         # set ready flag, clangd sends no meaningful notification when ready

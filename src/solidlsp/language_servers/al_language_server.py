@@ -1,4 +1,9 @@
-"""AL Language Server implementation for Microsoft Dynamics 365 Business Central."""
+"""AL Language Server implementation for Microsoft Dynamics 365 Business Central.
+
+You can pass the following entries in ``ls_specific_settings["al"]``:
+    - al_extension_version: Override the pinned AL VS Code extension version
+      downloaded by Serena (default: the bundled Serena version).
+"""
 
 import logging
 import os
@@ -7,22 +12,45 @@ import platform
 import re
 import stat
 import time
-import zipfile
 from pathlib import Path
 
-import requests
 from overrides import override
 
 from solidlsp import ls_types
 from solidlsp.language_servers.common import quote_windows_path
-from solidlsp.ls import DocumentSymbols, LSPFileBuffer, SolidLanguageServer
-from solidlsp.ls_config import LanguageServerConfig
+from solidlsp.ls import DocumentSymbols, LSPFileBuffer, RawDocumentSymbol, SolidLanguageServer
+from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_types import SymbolKind, UnifiedSymbolInformation
+from solidlsp.ls_utils import FileUtils
 from solidlsp.lsp_protocol_handler.lsp_types import Definition, DefinitionParams, LocationLink
 from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
+
+# Version pinning convention (see eclipse_jdtls.py for the full spec):
+#   INITIAL_* — frozen forever; legacy unversioned install dir is reserved for it.
+#   DEFAULT_* — bumped on upgrades; goes into a versioned subdir.
+INITIAL_AL_EXTENSION_VERSION = "18.0.2242655"
+INITIAL_AL_EXTENSION_SHA256 = "3971995e61a59dc4fcce4a65053072a67991ed624a16635c4f2911f12564b2b9"
+DEFAULT_AL_EXTENSION_VERSION = "18.0.2242655"
+DEFAULT_AL_EXTENSION_SHA256 = "3971995e61a59dc4fcce4a65053072a67991ed624a16635c4f2911f12564b2b9"
+
+
+def _al_extension_sha(version: str) -> str | None:
+    if version == INITIAL_AL_EXTENSION_VERSION:
+        return INITIAL_AL_EXTENSION_SHA256
+    if version == DEFAULT_AL_EXTENSION_VERSION:
+        return DEFAULT_AL_EXTENSION_SHA256
+    return None
+
+
+def _al_extension_dirname(version: str) -> str:
+    # legacy unversioned dir reserved for INITIAL; every other version goes into a versioned subdir
+    return "al-extension" if version == INITIAL_AL_EXTENSION_VERSION else f"al-extension-{version}"
+
+
+AL_EXTENSION_ALLOWED_HOSTS = ("marketplace.visualstudio.com",)
 
 
 class ALLanguageServer(SolidLanguageServer):
@@ -38,6 +66,7 @@ class ALLanguageServer(SolidLanguageServer):
     - Special initialization sequence required by AL Language Server
     - Custom AL-specific LSP commands (al/gotodefinition, al/setActiveWorkspace)
     - File opening requirement before symbol retrieval
+    - `al_extension_version` to override the bundled AL VS Code extension version
     """
 
     # Regex pattern to match AL object names like:
@@ -119,20 +148,12 @@ class ALLanguageServer(SolidLanguageServer):
         return path.replace("\\", "/")
 
     @classmethod
-    def _download_al_extension(cls, url: str, target_dir: str) -> bool:
+    def _download_al_extension(cls, url: str, target_dir: str, expected_sha256: str | None) -> bool:
         """
         Download and extract the AL extension from VS Code marketplace.
 
         The VS Code marketplace packages extensions as .vsix files (which are ZIP archives).
         This method downloads the VSIX file and extracts it to get the language server binaries.
-
-        Args:
-            logger: Logger for tracking download progress
-            url: VS Code marketplace URL for the AL extension
-            target_dir: Directory where the extension will be extracted
-
-        Returns:
-            True if successful, False otherwise
 
         Note:
             The download includes progress tracking and proper user-agent headers
@@ -141,46 +162,14 @@ class ALLanguageServer(SolidLanguageServer):
         """
         try:
             log.info(f"Downloading AL extension from {url}")
-
-            # Create target directory for the extension
             os.makedirs(target_dir, exist_ok=True)
-
-            # Download with proper headers to mimic VS Code marketplace client
-            # These headers are required for the marketplace to serve the VSIX file
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/octet-stream, application/vsix, */*",
-            }
-
-            response = requests.get(url, headers=headers, stream=True, timeout=300)
-            response.raise_for_status()
-
-            # Save to temporary VSIX file (will be deleted after extraction)
-            temp_file = os.path.join(target_dir, "al_extension_temp.vsix")
-            total_size = int(response.headers.get("content-length", 0))
-
-            log.info(f"Downloading {total_size / 1024 / 1024:.1f} MB...")
-
-            with open(temp_file, "wb") as f:
-                downloaded = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0 and downloaded % (10 * 1024 * 1024) == 0:  # Log progress every 10MB
-                            progress = (downloaded / total_size) * 100
-                            log.info(f"Download progress: {progress:.1f}%")
-
-            log.info("Download complete, extracting...")
-
-            # Extract VSIX file (VSIX files are just ZIP archives with a different extension)
-            # This will extract the extension folder containing the language server binaries
-            with zipfile.ZipFile(temp_file, "r") as zip_ref:
-                zip_ref.extractall(target_dir)
-
-            # Clean up temp file
-            os.remove(temp_file)
-
+            FileUtils.download_and_extract_archive_verified(
+                url,
+                target_dir,
+                "zip",
+                expected_sha256=expected_sha256,
+                allowed_hosts=AL_EXTENSION_ALLOWED_HOSTS,
+            )
             log.info("AL extension extracted successfully")
             return True
 
@@ -251,8 +240,10 @@ class ALLanguageServer(SolidLanguageServer):
         elif env_path:
             log.warning(f"AL_EXTENSION_PATH set but directory not found: {env_path}")
 
-        # Check default download location
-        default_path = os.path.join(cls.ls_resources_dir(solidlsp_settings), "al-extension", "extension")
+        # Check the resolved-version download location (versioned for non-INITIAL, legacy "al-extension" for INITIAL)
+        al_settings = solidlsp_settings.get_ls_specific_settings(Language.AL)
+        al_extension_version = al_settings.get("al_extension_version", DEFAULT_AL_EXTENSION_VERSION)
+        default_path = os.path.join(cls.ls_resources_dir(solidlsp_settings), _al_extension_dirname(al_extension_version), "extension")
         if os.path.exists(default_path):
             log.debug(f"Found AL extension in default location: {default_path}")
             return default_path
@@ -275,15 +266,17 @@ class ALLanguageServer(SolidLanguageServer):
             Path to installed extension or None if download failed
 
         """
-        al_extension_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), "al-extension")
+        al_settings = solidlsp_settings.get_ls_specific_settings(Language.AL)
+        al_extension_version = al_settings.get("al_extension_version", DEFAULT_AL_EXTENSION_VERSION)
+        al_extension_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), _al_extension_dirname(al_extension_version))
+        al_extension_url = (
+            "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-dynamics-smb/"
+            f"vsextensions/al/{al_extension_version}/vspackage"
+        )
 
-        # AL extension version - using latest stable version
-        AL_VERSION = "latest"
-        url = f"https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-dynamics-smb/vsextensions/al/{AL_VERSION}/vspackage"
+        log.info(f"Downloading AL extension from: {al_extension_url}")
 
-        log.info(f"Downloading AL extension from: {url}")
-
-        if cls._download_al_extension(url, al_extension_dir):
+        if cls._download_al_extension(al_extension_url, al_extension_dir, _al_extension_sha(al_extension_version)):
             extension_path = os.path.join(al_extension_dir, "extension")
             if os.path.exists(extension_path):
                 log.info("AL extension downloaded and installed successfully")
@@ -1025,37 +1018,43 @@ class ALLanguageServer(SolidLanguageServer):
         # Get symbols from parent implementation
         document_symbols = super().request_document_symbols(relative_file_path, file_buffer=file_buffer)
 
-        # Normalize names by stripping AL object metadata, storing originals for hover
-        def normalize_name(symbol: UnifiedSymbolInformation) -> None:
-            original_name = symbol["name"]
-            normalized_name = self._extract_al_display_name(original_name)
-
-            # Store original name if it was normalized (for hover injection)
-            # Only store if we have valid position data to avoid false matches at (0, 0)
-            if original_name != normalized_name:
-                sel_range = symbol.get("selectionRange")
-                if sel_range:
-                    start = sel_range.get("start")
-                    if start and "line" in start and "character" in start:
-                        line = start["line"]
-                        char = start["character"]
-                        self._al_original_names[(relative_file_path, line, char)] = original_name
-
-            symbol["name"] = normalized_name
-
-            # Process children recursively
-            if symbol.get("children"):
-                for child in symbol["children"]:
-                    normalize_name(child)
-
-        # Apply to all root symbols
-        for sym in document_symbols.root_symbols:
-            normalize_name(sym)
-
         return document_symbols
 
+    def _normalize_symbol_name(self, symbol: RawDocumentSymbol, relative_file_path: str) -> str:
+        original_name = symbol["name"]
+        normalized_name = self._extract_al_display_name(original_name)
+
+        if symbol.get("kind") in (SymbolKind.Function, SymbolKind.Method) and "(" in normalized_name:
+            normalized_name = normalized_name.split("(", 1)[0].strip()
+
+        if symbol.get("kind") == SymbolKind.Method and normalized_name.lower().startswith("action "):
+            normalized_name = normalized_name.split(None, 1)[-1].strip()
+
+        if symbol.get("kind") == SymbolKind.Field and ":" in normalized_name:
+            normalized_name = normalized_name.split(":", 1)[0].strip()
+
+        # Store original name if it was normalized for an AL object declaration
+        # Only store if we have valid position data to avoid false matches at (0, 0)
+        if original_name != normalized_name and self._AL_OBJECT_NAME_PATTERN.match(original_name):
+            sel_range = symbol.get("selectionRange")
+            if sel_range:
+                start = sel_range.get("start")  # type: ignore
+                if start and "line" in start and "character" in start:
+                    line = start["line"]
+                    char = start["character"]
+                    self._al_original_names[(relative_file_path, line, char)] = original_name
+
+        return normalized_name
+
     @override
-    def request_hover(self, relative_file_path: str, line: int, column: int) -> ls_types.Hover | None:
+    def _document_symbols_cache_fingerprint(self) -> int:
+        normalize_symbol_name_version = 1
+        return normalize_symbol_name_version
+
+    @override
+    def request_hover(
+        self, relative_file_path: str, line: int, column: int, file_buffer: LSPFileBuffer | None = None
+    ) -> ls_types.Hover | None:
         """
         Override to inject original AL object name (with type and ID) into hover responses.
 
@@ -1065,7 +1064,7 @@ class ALLanguageServer(SolidLanguageServer):
         # Normalize path separators for cross-platform compatibility (backslash → forward slash)
         relative_file_path = self._normalize_path(relative_file_path)
 
-        hover = super().request_hover(relative_file_path, line, column)
+        hover = super().request_hover(relative_file_path, line, column, file_buffer=file_buffer)
 
         if hover is None:
             return None

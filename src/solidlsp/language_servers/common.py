@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shutil
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -21,6 +22,8 @@ class RuntimeDependency:
     id: str
     platform_id: str | None = None
     url: str | None = None
+    sha256: str | None = None
+    allowed_hosts: tuple[str, ...] | list[str] | None = None
     archive_type: str | None = None
     binary_name: str | None = None
     command: str | list[str] | None = None
@@ -115,8 +118,9 @@ class RuntimeDependencyCollection:
         completed_process = subprocess.run(
             command,
             shell=True,
-            check=True,
+            check=False,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             **kwargs,
@@ -124,10 +128,8 @@ class RuntimeDependencyCollection:
         if completed_process.returncode != 0:
             log.warning("Command '%s' failed with return code %d", command, completed_process.returncode)
             log.warning("Command output:\n%s", completed_process.stdout)
-        else:
-            log.info(
-                "Command completed successfully",
-            )
+            raise subprocess.CalledProcessError(completed_process.returncode, command, completed_process.stdout)
+        log.info("Command completed successfully")
 
     @staticmethod
     def _install_from_url(dep: RuntimeDependency, target_dir: str) -> None:
@@ -136,9 +138,66 @@ class RuntimeDependencyCollection:
 
         if dep.archive_type in ("gz", "binary") and dep.binary_name:
             dest = os.path.join(target_dir, dep.binary_name)
-            FileUtils.download_and_extract_archive(dep.url, dest, dep.archive_type)
+            FileUtils.download_and_extract_archive_verified(
+                dep.url,
+                dest,
+                dep.archive_type,
+                expected_sha256=dep.sha256,
+                allowed_hosts=dep.allowed_hosts,
+            )
         else:
-            FileUtils.download_and_extract_archive(dep.url, target_dir, dep.archive_type or "zip")
+            FileUtils.download_and_extract_archive_verified(
+                dep.url,
+                target_dir,
+                dep.archive_type or "zip",
+                expected_sha256=dep.sha256,
+                allowed_hosts=dep.allowed_hosts,
+            )
+
+
+DEFAULT_UVX_PYTHON_VERSION = "3.13"
+
+
+def build_uvx_launch_command(
+    package: str,
+    version: str,
+    entrypoint: str,
+    extra_args: Sequence[str] = (),
+    python_version: str = DEFAULT_UVX_PYTHON_VERSION,
+) -> list[str]:
+    """Build a command that runs a pinned PyPI package's console script on demand via ``uvx`` / ``uv x``.
+
+    Resolution order:
+      1. Prefer ``uvx`` (env var ``UVX`` or PATH lookup).
+      2. Fall back to ``uv x`` if only ``uv`` is on PATH.
+      3. Raise ``RuntimeError`` if neither is available.
+
+    :param package: PyPI package name (e.g. ``"pyright"``).
+    :param version: Pinned package version.
+    :param entrypoint: Console script provided by the package (e.g. ``"pyright-langserver"``).
+    :param extra_args: Arguments appended after the entrypoint (e.g. ``("--stdio",)``).
+    :param python_version: Python interpreter version passed via ``-p`` (uv will fetch it if missing).
+    """
+    base_args = ["-p", python_version, "--from", f"{package}=={version}", entrypoint, *extra_args]
+
+    uvx_path = os.environ.get("UVX") or shutil.which("uvx")
+    if uvx_path is not None:
+        return [uvx_path, *base_args]
+
+    uv_path = shutil.which("uv")
+    if uv_path is not None:
+        return [uv_path, "x", *base_args]
+
+    raise RuntimeError("Could not find 'uvx' or 'uv' in PATH. Install uv (https://docs.astral.sh/uv/).")
+
+
+def build_npm_install_command(package_name: str, version: str, registry: str | None = None) -> list[str]:
+    """Build a pinned npm install command for a package in a Serena-managed install directory."""
+    command = ["npm", "install", "--prefix", "./"]
+    if registry:
+        command.extend(["--registry", registry])
+    command.append(f"{package_name}@{version}")
+    return command
 
 
 def quote_windows_path(path: str) -> str:

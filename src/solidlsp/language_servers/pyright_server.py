@@ -6,18 +6,19 @@ import logging
 import os
 import pathlib
 import re
-import sys
 import threading
 from typing import cast
 
 from overrides import override
 
-from solidlsp.ls import LanguageServerDependencyProvider, LanguageServerDependencyProviderSinglePath, SolidLanguageServer
+from solidlsp.ls import LanguageServerDependencyProvider, LanguageServerDependencyProviderUvx, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
+
+PYRIGHT_VERSION = "1.1.403"
 
 
 class PyrightServer(SolidLanguageServer):
@@ -44,14 +45,15 @@ class PyrightServer(SolidLanguageServer):
         self.found_source_files = False
 
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
-        return self.DependencyProvider(self._custom_settings, self._ls_resources_dir)
-
-    class DependencyProvider(LanguageServerDependencyProviderSinglePath):
-        def _get_or_install_core_dependency(self) -> str:
-            return sys.executable
-
-        def _create_launch_command(self, core_path: str) -> list[str]:
-            return [core_path, "-m", "pyright.langserver", "--stdio"]
+        return LanguageServerDependencyProviderUvx(
+            self._custom_settings,
+            self._ls_resources_dir,
+            package="pyright",
+            entrypoint="pyright-langserver",
+            default_version=PYRIGHT_VERSION,
+            version_setting_key="pyright_version",
+            extra_args=("--stdio",),
+        )
 
     @override
     def is_ignored_dirname(self, dirname: str) -> bool:
@@ -155,6 +157,52 @@ class PyrightServer(SolidLanguageServer):
                 self.found_source_files = True
                 self.analysis_complete.set()
 
+        def handle_pyright_progress_notification(progress_kind: str, params: object | None) -> None:
+            """Tracks Pyright-specific progress notifications.
+
+            Pyright can emit custom progress notifications instead of only using
+            ``$/progress``. Handling them avoids noisy unhandled-method warnings
+            and provides an additional signal that initial analysis has quiesced.
+            """
+            # normalizing the notification payload
+            message_text = ""
+            percentage: object | None = None
+            if isinstance(params, dict):
+                raw_message = params.get("message")
+                message_text = "" if raw_message is None else str(raw_message)
+                percentage = params.get("percentage")
+            elif params is not None:
+                message_text = str(params)
+
+            progress_label = f"{message_text} ({percentage}%)" if percentage is not None else message_text
+
+            # logging the progress transition
+            if progress_kind == "begin":
+                log.info("Pyright progress started: %s", progress_label)
+                return
+
+            if progress_kind == "report":
+                log.debug("Pyright progress update: %s", progress_label)
+                return
+
+            log.info("Pyright progress finished: %s", progress_label)
+            self.analysis_complete.set()
+
+        def pyright_begin_progress(params: object | None) -> None:
+            """Handles the ``pyright/beginProgress`` notification."""
+            # delegating to the shared progress handler
+            handle_pyright_progress_notification("begin", params)
+
+        def pyright_report_progress(params: object | None) -> None:
+            """Handles the ``pyright/reportProgress`` notification."""
+            # delegating to the shared progress handler
+            handle_pyright_progress_notification("report", params)
+
+        def pyright_end_progress(params: object | None) -> None:
+            """Handles the ``pyright/endProgress`` notification."""
+            # delegating to the shared progress handler
+            handle_pyright_progress_notification("end", params)
+
         def check_experimental_status(params: dict) -> None:
             """
             Also listen for experimental/serverStatus as a backup signal
@@ -170,6 +218,9 @@ class PyrightServer(SolidLanguageServer):
         self.server.on_notification("window/logMessage", window_log_message)
         self.server.on_request("workspace/executeClientCommand", execute_client_command_handler)
         self.server.on_notification("$/progress", do_nothing)
+        self.server.on_notification("pyright/beginProgress", pyright_begin_progress)
+        self.server.on_notification("pyright/reportProgress", pyright_report_progress)
+        self.server.on_notification("pyright/endProgress", pyright_end_progress)
         self.server.on_notification("textDocument/publishDiagnostics", do_nothing)
         self.server.on_notification("language/actionableNotification", do_nothing)
         self.server.on_notification("experimental/serverStatus", check_experimental_status)

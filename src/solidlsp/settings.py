@@ -22,17 +22,24 @@ class SolidLSPSettings:
     """
     Path to the directory in which to store global Solid-LSP data (which is not project-specific)
     """
-    project_data_relative_path: str = ".solidlsp"
+    project_data_path: str = ""
     """
-    Relative path within each project directory where Solid-LSP can store project-specific data, e.g. cache files.
-    For instance, if this is ".solidlsp" and the project is located at "/home/user/myproject",
-    then Solid-LSP will store project-specific data in "/home/user/myproject/.solidlsp".
+    Absolute path to a directory where Solid-LSP can store project-specific data, e.g. cache files.
+    For instance, if this is "/home/user/myproject/.solidlsp",
+    then Solid-LSP will store project-specific data (e.g. caches) in that directory.
     """
     ls_specific_settings: dict["Language", dict[str, Any]] = field(default_factory=dict)
     """
     Advanced configuration option allowing to configure language server implementation specific options.
     Have a look at the docstring of the constructors of the corresponding LS implementations within solidlsp to see which options are available.
     No documentation on options means no options are available.
+    """
+    additional_workspace_folders: list[str] = field(default_factory=list)
+    """
+    Additional workspace folder paths for cross-package reference support.
+    Paths can be absolute or relative to the project root. Each folder is added as a workspace
+    folder in the LSP initialization, enabling language servers to discover symbols and references
+    across package boundaries (e.g. in monorepos).
     """
 
     def __post_init__(self) -> None:

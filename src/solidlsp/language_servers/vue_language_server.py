@@ -8,20 +8,21 @@ import os
 import pathlib
 import shutil
 import threading
-from pathlib import Path
+from collections.abc import Callable
+from pathlib import Path, PurePath
 from time import sleep
 from typing import Any
 
 from overrides import override
 
 from solidlsp import ls_types
-from solidlsp.language_servers.common import RuntimeDependency, RuntimeDependencyCollection
+from solidlsp.language_servers.common import RuntimeDependency, RuntimeDependencyCollection, build_npm_install_command
 from solidlsp.language_servers.typescript_language_server import (
     TypeScriptLanguageServer,
     prefer_non_node_modules_definition,
 )
-from solidlsp.ls import LSPFileBuffer, SolidLanguageServer
-from solidlsp.ls_config import Language, LanguageServerConfig
+from solidlsp.ls import LanguageServerDependencyProvider, LSPFileBuffer, SolidLanguageServer
+from solidlsp.ls_config import FilenameMatcher, Language, LanguageServerConfig
 from solidlsp.ls_exceptions import SolidLSPException
 from solidlsp.ls_types import Location
 from solidlsp.ls_utils import PathUtils
@@ -47,13 +48,32 @@ class VueTypeScriptServer(TypeScriptLanguageServer):
         """
         return Language.TYPESCRIPT
 
-    class DependencyProvider(TypeScriptLanguageServer.DependencyProvider):
-        override_ts_ls_executable: str | None = None
+    def get_source_fn_matcher(self) -> FilenameMatcher:
+        # must override with Vue-specific matcher to ensure .vue files are included (as they can be discovered via references,
+        # for instance; otherwise, we may find references in .vue files but then filter the results out, because .vue files are ignored.)
+        return Language.VUE.get_source_fn_matcher()
 
+    class DependencyProvider(TypeScriptLanguageServer.DependencyProvider):
+        """Dependency provider that returns a pre-resolved executable path.
+
+        The Vue LS install (run by ``VueLanguageServer._setup_runtime_dependencies``)
+        already locates the ``typescript-language-server`` binary alongside the Vue
+        language server, so the companion does not need to perform another install
+        lookup — it just returns the path it was constructed with.
+        """
+
+        def __init__(
+            self,
+            custom_settings: SolidLSPSettings.CustomLSSettings,
+            ls_resources_dir: str,
+            explicit_executable_path: str,
+        ) -> None:
+            super().__init__(custom_settings, ls_resources_dir)
+            self._explicit_executable_path = explicit_executable_path
+
+        @override
         def _get_or_install_core_dependency(self) -> str:
-            if self.override_ts_ls_executable is not None:
-                return self.override_ts_ls_executable
-            return super()._get_or_install_core_dependency()
+            return self._explicit_executable_path
 
     @override
     def _get_language_id_for_file(self, relative_file_path: str) -> str:
@@ -84,9 +104,21 @@ class VueTypeScriptServer(TypeScriptLanguageServer):
     ):
         self._vue_plugin_path = vue_plugin_path
         self._custom_tsdk_path = tsdk_path
-        VueTypeScriptServer.DependencyProvider.override_ts_ls_executable = ts_ls_executable_path
+        # Stored as instance state so the override survives across concurrent
+        # constructions of multiple VueLanguageServer instances. The class
+        # attribute pattern this replaces was racy: two parallel constructors
+        # could see each other's value in the brief window between assignment
+        # and reset.
+        self._explicit_ts_ls_executable = ts_ls_executable_path
         super().__init__(config, repository_root_path, solidlsp_settings)
-        VueTypeScriptServer.DependencyProvider.override_ts_ls_executable = None
+
+    @override
+    def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
+        return self.DependencyProvider(
+            self._custom_settings,
+            self._ls_resources_dir,
+            self._explicit_ts_ls_executable,
+        )
 
     @override
     def _get_initialize_params(self, repository_absolute_path: str) -> InitializeParams:
@@ -134,8 +166,6 @@ class VueLanguageServer(SolidLanguageServer):
 
     TS_SERVER_READY_TIMEOUT = 5.0
     VUE_SERVER_READY_TIMEOUT = 3.0
-    # Windows requires more time due to slower I/O and process operations.
-    VUE_INDEXING_WAIT_TIME = 4.0 if os.name == "nt" else 2.0
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
         vue_lsp_executable_path, self.tsdk_path, self._ts_ls_cmd = self._setup_runtime_dependencies(config, solidlsp_settings)
@@ -153,6 +183,48 @@ class VueLanguageServer(SolidLanguageServer):
         self._ts_server_started = False
         self._vue_files_indexed = False
         self._indexed_vue_file_uris: list[str] = []
+        self._ls_operational_ready_event = threading.Event()
+        self._ls_operational_lock = threading.Lock()
+        self._ls_operational_thread: threading.Thread | None = None
+
+    def _warm_up_ls_operational_state(self) -> None:
+        """Warm up the Vue language server operational state asynchronously."""
+        # execute the operational warm-up
+        try:
+            self._ensure_ls_operational()
+        except SolidLSPException:
+            if not self.server_started:
+                log.debug("Skipping Vue language server operational warm-up because the server is stopping")
+                return
+            log.exception("Error while warming up Vue language server operational state")
+        except Exception:
+            log.exception("Error while warming up Vue language server operational state")
+
+    def _ensure_ls_operational(self) -> None:
+        # short-circuit completed warm-up
+        if self._ls_operational_ready_event.is_set():
+            return
+
+        # serialize the warm-up sequence
+        with self._ls_operational_lock:
+            # short-circuit repeated callers after waiting for the lock
+            if self._ls_operational_ready_event.is_set():
+                return
+
+            # validate server availability
+            if not self.server_started:
+                raise SolidLSPException("Language Server not started")
+
+            # wait for cross-file reference readiness
+            if not self._has_waited_for_cross_file_references:
+                sleep(self._get_wait_time_for_cross_file_referencing())
+                self._has_waited_for_cross_file_references = True
+
+            # index Vue files on the companion TypeScript server
+            self._ensure_vue_files_indexed_on_ts_server()
+
+            # publish operational readiness
+            self._ls_operational_ready_event.set()
 
     @override
     def is_ignored_dirname(self, dirname: str) -> bool:
@@ -204,6 +276,11 @@ class VueLanguageServer(SolidLanguageServer):
         vue_files = self._find_all_vue_files()
         log.debug(f"Found {len(vue_files)} .vue files to index")
 
+        # Prepare the TS server to track new $/progress notifications triggered
+        # by the didOpen calls below. Must happen BEFORE opening files to avoid
+        # a race where progress begins and ends before we start waiting.
+        self._ts_server.expect_indexing()
+
         for vue_file in vue_files:
             try:
                 with self._ts_server.open_file(vue_file) as file_buffer:
@@ -213,13 +290,23 @@ class VueLanguageServer(SolidLanguageServer):
                 log.debug(f"Failed to open {vue_file} on TS server: {e}")
 
         self._vue_files_indexed = True
-        log.info("Vue file indexing on TypeScript server complete")
+        log.info("Vue file indexing on TypeScript server complete, waiting for TS server to finish processing")
 
-        sleep(self._get_vue_indexing_wait_time())
-        log.debug("Wait period after Vue file indexing complete")
+        self._wait_for_ts_indexing_complete()
 
-    def _get_vue_indexing_wait_time(self) -> float:
-        return self.VUE_INDEXING_WAIT_TIME
+    def _wait_for_ts_indexing_complete(self) -> None:
+        """Wait for the companion TypeScript server to finish processing opened Vue files.
+
+        Uses the $/progress tracking in TypeScriptLanguageServer: after Vue files are
+        opened, tsserver sends "Initializing JS/TS language features…" progress.
+        We wait for all progress tokens to complete, with a timeout fallback.
+        """
+        assert self._ts_server is not None
+        timeout = TypeScriptLanguageServer.INDEXING_PROGRESS_TIMEOUT
+        if self._ts_server.wait_for_indexing(timeout=timeout):
+            log.info("TypeScript server finished indexing Vue files (signaled via $/progress)")
+        else:
+            log.warning(f"Timeout ({timeout}s) waiting for TypeScript server to finish indexing Vue files, proceeding anyway")
 
     def _send_references_request(self, relative_file_path: str, line: int, column: int) -> list[lsp_types.Location] | None:
         uri = PathUtils.path_to_uri(os.path.join(self.repository_root_path, relative_file_path))
@@ -265,9 +352,7 @@ class VueLanguageServer(SolidLanguageServer):
         return result
 
     def request_file_references(self, relative_file_path: str) -> list:
-        if not self.server_started:
-            log.error("request_file_references called before Language Server started")
-            raise SolidLSPException("Language Server not started")
+        self._ensure_ls_operational()
 
         absolute_file_path = os.path.join(self.repository_root_path, relative_file_path)
         uri = PathUtils.path_to_uri(absolute_file_path)
@@ -330,15 +415,7 @@ class VueLanguageServer(SolidLanguageServer):
 
     @override
     def request_references(self, relative_file_path: str, line: int, column: int) -> list[ls_types.Location]:
-        if not self.server_started:
-            log.error("request_references called before Language Server started")
-            raise SolidLSPException("Language Server not started")
-
-        if not self._has_waited_for_cross_file_references:
-            sleep(self._get_wait_time_for_cross_file_referencing())
-            self._has_waited_for_cross_file_references = True
-
-        self._ensure_vue_files_indexed_on_ts_server()
+        self._ensure_ls_operational()
         symbol_refs = self._send_ts_references_request(relative_file_path, line=line, column=column)
 
         if relative_file_path.endswith(".vue"):
@@ -363,23 +440,93 @@ class VueLanguageServer(SolidLanguageServer):
 
     @override
     def request_definition(self, relative_file_path: str, line: int, column: int) -> list[ls_types.Location]:
-        if not self.server_started:
-            log.error("request_definition called before Language Server started")
-            raise SolidLSPException("Language Server not started")
-
+        self._ensure_ls_operational()
         assert self._ts_server is not None
         with self._ts_server.open_file(relative_file_path):
             return self._ts_server.request_definition(relative_file_path, line, column)
 
     @override
     def request_rename_symbol_edit(self, relative_file_path: str, line: int, column: int, new_name: str) -> ls_types.WorkspaceEdit | None:
-        if not self.server_started:
-            log.error("request_rename_symbol_edit called before Language Server started")
-            raise SolidLSPException("Language Server not started")
-
+        self._ensure_ls_operational()
         assert self._ts_server is not None
         with self._ts_server.open_file(relative_file_path):
             return self._ts_server.request_rename_symbol_edit(relative_file_path, line, column, new_name)
+
+    @override
+    def request_text_document_diagnostics(
+        self,
+        relative_file_path: str,
+        start_line: int = 0,
+        end_line: int = -1,
+        min_severity: int = 4,
+    ) -> list[ls_types.Diagnostic]:
+        self._ensure_ls_operational()
+        assert self._ts_server is not None
+        return self._ts_server.request_text_document_diagnostics(relative_file_path, start_line, end_line, min_severity)
+
+    def _forward_edit_to_ts_server_if_needed(self, relative_file_path: str, edit_fn: Callable[[], object]) -> None:
+        """
+        Calls ``edit_fn`` on the TypeScript server if the file is open there.
+
+        Only applicable to non-TypeScript files (i.e. .vue files) that have been
+        indexed on the TypeScript server for cross-file reference support.
+
+        :param relative_file_path: the relative path of the file that was edited
+        :param edit_fn: callable that performs the corresponding edit on ``_ts_server``
+        """
+        if self._ts_server is None or not self._ts_server_started:
+            return
+        if self._is_typescript_file(relative_file_path):
+            return
+
+        absolute_file_path = str(PurePath(self.repository_root_path, relative_file_path))
+        uri = pathlib.Path(absolute_file_path).as_uri()
+        if uri in self._ts_server.open_file_buffers:
+            edit_fn()
+
+    @override
+    def insert_text_at_position(self, relative_file_path: str, line: int, column: int, text_to_be_inserted: str) -> ls_types.Position:
+        """
+        Inserts text at the given position, forwarding the change to the TypeScript server if it has the file open.
+
+        :param relative_file_path: the relative path of the file to edit
+        :param line: the line number
+        :param column: the column number
+        :param text_to_be_inserted: the text to insert
+        :return: updated cursor position
+        """
+        result = super().insert_text_at_position(relative_file_path, line, column, text_to_be_inserted)
+        self._forward_edit_to_ts_server_if_needed(
+            relative_file_path,
+            lambda: self._ts_server.insert_text_at_position(  # type: ignore[union-attr]
+                relative_file_path, line, column, text_to_be_inserted
+            ),
+        )
+        return result
+
+    @override
+    def delete_text_between_positions(
+        self,
+        relative_file_path: str,
+        start: ls_types.Position,
+        end: ls_types.Position,
+    ) -> str:
+        """
+        Deletes text between the given positions, forwarding the change to the TypeScript server if it has the file open.
+
+        :param relative_file_path: the relative path of the file to edit
+        :param start: start position
+        :param end: end position
+        :return: deleted text
+        """
+        deleted_text = super().delete_text_between_positions(relative_file_path, start, end)
+        self._forward_edit_to_ts_server_if_needed(
+            relative_file_path,
+            lambda: self._ts_server.delete_text_between_positions(  # type: ignore[union-attr]
+                relative_file_path, start, end
+            ),
+        )
+        return deleted_text
 
     @classmethod
     def _setup_runtime_dependencies(cls, config: LanguageServerConfig, solidlsp_settings: SolidLSPSettings) -> tuple[list[str], str, str]:
@@ -394,31 +541,26 @@ class VueLanguageServer(SolidLanguageServer):
         typescript_language_server_version = typescript_config.get("typescript_language_server_version", "5.1.3")
         vue_config = solidlsp_settings.get_ls_specific_settings(Language.VUE)
         vue_language_server_version = vue_config.get("vue_language_server_version", "3.1.5")
+        npm_registry = vue_config.get("npm_registry", typescript_config.get("npm_registry"))
 
         deps = RuntimeDependencyCollection(
             [
                 RuntimeDependency(
                     id="vue-language-server",
                     description="Vue language server package (Volar)",
-                    command=["npm", "install", "--prefix", "./", f"@vue/language-server@{vue_language_server_version}"],
+                    command=build_npm_install_command("@vue/language-server", vue_language_server_version, npm_registry),
                     platform_id="any",
                 ),
                 RuntimeDependency(
                     id="typescript",
                     description="TypeScript (required for tsdk)",
-                    command=["npm", "install", "--prefix", "./", f"typescript@{typescript_version}"],
+                    command=build_npm_install_command("typescript", typescript_version, npm_registry),
                     platform_id="any",
                 ),
                 RuntimeDependency(
                     id="typescript-language-server",
                     description="TypeScript language server (for Vue LS 3.x tsserver forwarding)",
-                    command=[
-                        "npm",
-                        "install",
-                        "--prefix",
-                        "./",
-                        f"typescript-language-server@{typescript_language_server_version}",
-                    ],
+                    command=build_npm_install_command("typescript-language-server", typescript_language_server_version, npm_registry),
                     platform_id="any",
                 ),
             ]
@@ -494,6 +636,7 @@ class VueLanguageServer(SolidLanguageServer):
                     "signatureHelp": {"dynamicRegistration": True},
                     "codeAction": {"dynamicRegistration": True},
                     "rename": {"dynamicRegistration": True, "prepareSupport": True},
+                    "publishDiagnostics": {"relatedInformation": True},
                 },
                 "workspace": {
                     "workspaceFolders": True,
@@ -685,6 +828,15 @@ class VueLanguageServer(SolidLanguageServer):
         else:
             log.info("Vue server initialization complete")
 
+        # kick off asynchronous operational warm-up
+        self._ls_operational_ready_event.clear()
+        self._ls_operational_thread = threading.Thread(
+            target=self._warm_up_ls_operational_state,
+            name="vue-ls-operational-warmup",
+            daemon=True,
+        )
+        self._ls_operational_thread.start()
+
     def _find_tsconfig_for_file(self, file_path: str) -> str | None:
         if not file_path:
             tsconfig_path = os.path.join(self.repository_root_path, "tsconfig.json")
@@ -711,8 +863,14 @@ class VueLanguageServer(SolidLanguageServer):
 
     @override
     def stop(self, shutdown_timeout: float = 5.0) -> None:
-        self._cleanup_indexed_vue_files()
-        self._stop_typescript_server()
+        # serialize shutdown with operational warm-up
+        with self._ls_operational_lock:
+            self.server_started = False
+            self._ls_operational_ready_event.clear()
+            self._cleanup_indexed_vue_files()
+            self._stop_typescript_server()
+            self._ls_operational_thread = None
+
         super().stop(shutdown_timeout)
 
     @override
@@ -747,8 +905,9 @@ class VueLanguageServer(SolidLanguageServer):
 
         return self._filter_shorthand_property_duplicates(symbols)
 
+    @staticmethod
     def _filter_shorthand_property_duplicates(
-        self, symbols: list[DocumentSymbol] | list[SymbolInformation]
+        symbols: list[DocumentSymbol] | list[SymbolInformation],
     ) -> list[DocumentSymbol] | list[SymbolInformation]:
         """
         Filter out Property symbols that have a matching Variable symbol with the same name.

@@ -48,7 +48,7 @@ class LanguageServerFactory:
             timeout=self.ls_timeout,
             solidlsp_settings=SolidLSPSettings(
                 solidlsp_dir=home_dir,
-                project_data_relative_path=SERENA_MANAGED_DIR_NAME,
+                project_data_path=SERENA_MANAGED_DIR_NAME,
                 ls_specific_settings=self.ls_specific_settings or {},
             ),
         )
